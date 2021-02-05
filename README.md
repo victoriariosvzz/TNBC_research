@@ -3,7 +3,7 @@
 ## El código principal 
 Se encuentra en el archivo con extensión .Rproj en formato Rmarkdown
 
-## Los data frames
+## Data frames
 Se encuentran en carpetas zip, excepto la que contiene los datos RNASeq de todos los pacientes, ya que excede la capacidad de 25MB de github, pero se encuentra en el drive del projecto: [https://drive.google.com/drive/folders/1jslFtYwAlzpFnOmgiztPSmCKdHo6nvm5?usp=sharing]
 
 **Actualización:** 
