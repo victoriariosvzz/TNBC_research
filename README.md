@@ -4,7 +4,7 @@
 Se encuentra en el archivo con extensión .Rproj en formato Rmarkdown
 
 ## Los data frames
-Se encuentran en carpetas zip, excepto la que contiene los datos RNASeq de todos los pacientes, ya que excede la capacidad de 25MB de github, pero se encuentra en el drive del projecto: [https://github.com/victoriariosvzz/TNBC_research]
+Se encuentran en carpetas zip, excepto la que contiene los datos RNASeq de todos los pacientes, ya que excede la capacidad de 25MB de github, pero se encuentra en el drive del projecto: [https://drive.google.com/drive/folders/1jslFtYwAlzpFnOmgiztPSmCKdHo6nvm5?usp=sharing]
 
 **Actualización:** 
 - Ya están filtrados los id's de los pacientes con TNBC con base en los datos clínicos
