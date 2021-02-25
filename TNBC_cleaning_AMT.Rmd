@@ -35,7 +35,7 @@ class(df.RNAseq.t) # Verify its class
 str(df.RNAseq.t, list.len=10) # Check its structure
 ```
 
-Importamos el data frame de la información con los id's de los pacientes que son Triple Negativo
+Import the data of the patients which ID matches with TNBC cases.
 ```{r}
 df.TNBC.id <- read.csv("TNBC_merged_id.csv") # Data frame with TNBC patients' IDs
 df.id <- gsub("-",".",df.TNBC.id$patient.bcr_patient_barcode_upper)
@@ -54,5 +54,14 @@ tnbc.df <- filter(df.RNAseq.t, Reduce("|", lapply(rownames(df.RNAseq.t), grepl, 
 Check the structure of the resulting filtered data frame
 ```{r}
 str(tnbc.df, list.len = 10) # Check its structure
+```
+## Normalizing the data
+
+Applying log2 to all the data set
+```{r}
+
+tnbc.df.2 <- log2(tnbc.df + 1)
+
+cbind(tnbc.df[40:100,2], tnbc.df.2[40:100,2]) # comparing the original values against the normalized ones
 ```
 
