@@ -1,0 +1,80 @@
+---
+title: "Practicing R - ICGC Data Portal"
+author: "Victoria Rios"
+date: "3/7/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+Data set source: [https://dcc.icgc.org/releases/release_28/Projects/BRCA-US]
+
+```{r}
+x <- read.csv('exp_seq.BRCA-US.tsv.gz',sep = '\t', nrows = 2000, na.strings = '?')
+str(x)
+```
+
+Dropping the columns with NA values or not relevant information
+```{r}
+x <- subset(x, select = -c(fold_change,total_read_count,platform,raw_data_repository,experimental_protocol,alignment_algorithm,normalization_algorithm,other_analysis_algorithm,reference_sample_type))
+
+x[is.na(x)] <- 0 # replacing NA values with a 0
+
+str(x)
+```
+## Clustering
+It's time to build the distance matrix. We use the euclidean distance method.
+```{r}
+d <- dist(x, method = 'euclidean')
+```
+
+## Hierarchial clustering
+We proceed with average linkage method.
+```{r}
+h <- hclust(d, method = 'average')
+```
+
+
+Looking at the dendogram
+```{r}
+plot(h)
+```
+
+Next, we can cut the dendrogram in order to create the desired number of clusters.
+```{r}
+cut_avg <- cutree(h, k=10)
+```
+
+```{r}
+library(dplyr)
+
+plot(h)
+rect.hclust(h , k = 10, border = 2:6)
+abline(h = 10, col = 'red')
+```
+Now we can see the three clusters enclosed in three different colored boxes. 
+```{r}
+suppressPackageStartupMessages(library(dendextend))
+avg_dend_obj <- as.dendrogram(h)
+avg_col_dend <- color_branches(h, h = 10)
+plot(avg_col_dend)
+```
+Now we  append the cluster results obtained back in the original dataframe under column name the cluster with mutate(), from the dplyr package and count how many observations were assigned to each cluster with the count() function.
+```{r}
+suppressPackageStartupMessages(library(dplyr))
+x_clusters <- mutate(x, cluster = cut_avg)
+count(x_clusters,cluster)
+```
+Visualizing some relationships of the data
+```{r}
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(plotly))
+
+ggplotly(ggplot(x_clusters, aes(x=gene_id, y = normalized_read_count, color = factor(cluster))) + geom_point())
+```
+
+
+
