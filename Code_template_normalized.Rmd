@@ -1,0 +1,173 @@
+---
+title: "Code_template_normalized"
+author: "Victoria Rios"
+date: "16/3/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Análisis de datos de BRCA TN TCGA
+
+Primero definimos la opción para no se lean los strings como factores.
+
+```{r}
+options(stringsAsFactors = F)
+```
+
+Primero leemos los datos clínicos.
+```{r}
+brca_clin <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", header = F,
+row.names = 1, as.is = T)
+```
+
+Obtenemos los datos para los 3 receptores en los renglones 24, 29 y 1160.
+```{r}
+print(rownames(brca_clin)[c(24,29,1160)])
+```
+
+Índices de muestras triple negativo (TN)
+```{r}
+index_TN <- which(as.character(brca_clin[24,]) == "negative" &
+as.character(brca_clin[29,]) == "negative" &
+as.character(brca_clin[1160,]) == "negative")
+```
+
+Filtramos para tener datos sólo de los TN y obtenemos las claves de las muestras
+
+```{r}
+brca_clin <- brca_clin[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[21,]))
+```
+
+Leer datos de RNA-seq
+```{r}
+f <- "BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T, row.names = 1)
+brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+```
+
+Extraer gene symbols
+```{r}
+gene_symbols <- as.character(sapply(rownames(brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+```
+
+Eliminar renglones con gene symbol igual a “?”
+```{r}
+brca_rnaseq <- brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+Ver el tipo de muestra de acuerdo al TCGA barcode y quitar los normales (tipo “11”) https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+Hacer match entre las muestra TN y los de RNAseq
+```{r}
+tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
+substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
+tn_match_na <- which(is.na(tn_match))
+brca_clin <- brca_clin[,-tn_match_na]
+tn_samples <- tn_samples[-tn_match_na]
+tn_match <- tn_match[-tn_match_na]
+brca_rnaseq <- brca_rnaseq[,tn_match]
+```
+
+# Normalization of the dataset
+```{r}
+brca_rnaseq <- log2(brca_rnaseq + 1)
+```
+
+
+# Clustering
+It's time to build the distance matrix. We use the euclidean distance method.
+```{r}
+d <- dist(brca_rnaseq, method = 'euclidean')
+```
+
+## Hierarchial clustering
+We proceed with average linkage method.
+```{r}
+h <- hclust(d, method = 'average')
+```
+
+
+Looking at the dendogram
+```{r}
+plot(h)
+```
+
+Next, we can cut the dendrogram in order to create the desired number of clusters.
+```{r}
+cut_avg <- cutree(h, k=5)
+```
+
+```{r}
+library(dplyr)
+
+plot(h)
+rect.hclust(h , k = 5, border = 2:6)
+abline(h = 5, col = 'red')
+```
+
+Now we can see the three clusters enclosed in three different colored boxes. 
+```{r}
+suppressPackageStartupMessages(library(dendextend))
+avg_dend_obj <- as.dendrogram(h)
+avg_col_dend <- color_branches(h, h = 5)
+plot(avg_col_dend)
+```
+
+## K-means
+```{r}
+k <- kmeans(brca_rnaseq, centers = 10)
+```
+
+The cluster assignments are in the cluster component:
+```{r}
+groups <- k$cluster
+```
+
+Note that because the first center is chosen at random, the final clusters are random. We impose some stability by repeating the entire function several times and averaging the results. The number of random starting values to use can be assigned through the nstart argument.
+```{r}
+k <- kmeans(x = brca_rnaseq, centers = 10, nstart = 25, iter.max = 800)
+```
+
+```{r}
+library(factoextra)
+fviz_cluster(k, data = brca_rnaseq,
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             )
+```
+
+## Heatmaps
+A powerful visualization tool for discovering clusters or patterns in your data is the heatmap. The idea is simple: plot an image of your data matrix with colors used as the visual cue and both the columns and rows ordered according to the results of a clustering algorithm. We will demonstrate this with the tissue_gene_expression dataset. We will scale the rows of the gene expression matrix.
+
+The first step is compute:
+```{r}
+brca_rnaseq_df <- as.data.frame(brca_rnaseq)
+
+x <- sweep(brca_rnaseq_df, 2, colMeans(brca_rnaseq_df))
+
+```
+
+### Filtering features
+If the information about clusters in included in just a few features, including all the features can add enough noise that detecting clusters becomes challenging. One simple approach to try to remove features with no information is to only include those with high variance. In the movie example, a user with low variance in their ratings is not really informative: all the movies seem about the same to them. Here is an example of how we can include only the features with high variance.
+```{r}
+library(matrixStats)
+x <- as.matrix(x)
+sds <- colSds(x, na.rm = TRUE)
+o <- order(sds, decreasing = TRUE)[1:25]
+heatmap(x[1:500,o], col = RColorBrewer::brewer.pal(11, "Spectral"))
+```
+
+
