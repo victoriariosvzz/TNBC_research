@@ -69,7 +69,7 @@ brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
 sample_type <- sample_type[-which(sample_type == "11")]
 ```
 
-Hacer match entre las muestra TN y los de RNAseq
+Hacer match entre las muestras TN y los de RNAseq
 ```{r}
 tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
 substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
@@ -78,18 +78,23 @@ brca_clin <- brca_clin[,-tn_match_na]
 tn_samples <- tn_samples[-tn_match_na]
 tn_match <- tn_match[-tn_match_na]
 brca_rnaseq <- brca_rnaseq[,tn_match]
+
+brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+
 ```
 
 # Normalization of the dataset
 ```{r}
-brca_rnaseq <- log2(brca_rnaseq + 1)
+brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
 ```
 
 
-# Clustering
 It's time to build the distance matrix. We use the euclidean distance method.
 ```{r}
-d <- dist(brca_rnaseq, method = 'euclidean')
+temp <- brca_rnaseq_n
+row.names(temp) <- seq(1, nrow(temp))
+
+d <- dist(temp, method = 'euclidean')
 ```
 
 ## Hierarchial clustering
@@ -106,28 +111,28 @@ plot(h)
 
 Next, we can cut the dendrogram in order to create the desired number of clusters.
 ```{r}
-cut_avg <- cutree(h, k=5)
+cut_avg <- cutree(h, k=10)
 ```
 
 ```{r}
 library(dplyr)
 
 plot(h)
-rect.hclust(h , k = 5, border = 2:6)
-abline(h = 5, col = 'red')
+rect.hclust(h , k = 10, border = 2:6)
+abline(h = 10, col = 'red')
 ```
 
 Now we can see the three clusters enclosed in three different colored boxes. 
 ```{r}
 suppressPackageStartupMessages(library(dendextend))
 avg_dend_obj <- as.dendrogram(h)
-avg_col_dend <- color_branches(h, h = 5)
+avg_col_dend <- color_branches(h, h = 10)
 plot(avg_col_dend)
 ```
 
-## K-means
+# Clustering the original data set (normalized)
 ```{r}
-k <- kmeans(brca_rnaseq, centers = 10)
+k <- kmeans(brca_rnaseq_n, centers = 3)
 ```
 
 The cluster assignments are in the cluster component:
@@ -137,24 +142,16 @@ groups <- k$cluster
 
 Note that because the first center is chosen at random, the final clusters are random. We impose some stability by repeating the entire function several times and averaging the results. The number of random starting values to use can be assigned through the nstart argument.
 ```{r}
-k <- kmeans(x = brca_rnaseq, centers = 10, nstart = 25, iter.max = 800)
+k <- kmeans(x = brca_rnaseq_n, centers = 3, nstart = 25, iter.max = 800)
 ```
 
-```{r}
-library(factoextra)
-fviz_cluster(k, data = brca_rnaseq,
-             geom = "point",
-             ellipse.type = "convex", 
-             ggtheme = theme_bw()
-             )
-```
 
 ## Heatmaps
 A powerful visualization tool for discovering clusters or patterns in your data is the heatmap. The idea is simple: plot an image of your data matrix with colors used as the visual cue and both the columns and rows ordered according to the results of a clustering algorithm. We will demonstrate this with the tissue_gene_expression dataset. We will scale the rows of the gene expression matrix.
 
 The first step is compute:
 ```{r}
-brca_rnaseq_df <- as.data.frame(brca_rnaseq)
+brca_rnaseq_df <- as.data.frame(brca_rnaseq_n)
 
 x <- sweep(brca_rnaseq_df, 2, colMeans(brca_rnaseq_df))
 
@@ -167,7 +164,176 @@ library(matrixStats)
 x <- as.matrix(x)
 sds <- colSds(x, na.rm = TRUE)
 o <- order(sds, decreasing = TRUE)[1:25]
-heatmap(x[1:500,o], col = RColorBrewer::brewer.pal(11, "Spectral"))
+heatmap(x[1:100,o], col = RColorBrewer::brewer.pal(11, "Spectral"))
+```
+
+
+# Clustering PCA results (normalized)
+
+## PCA
+```{r}
+# Principal components
+x <- prcomp(brca_rnaseq_n, scale = FALSE)
+```
+
+```{r}
+library(factoextra)
+
+#Visualize eigenvalues (scree plot). Show the percentage of variances explained by each principal component.
+fviz_eig(x)
+```
+## Graph of individuals. 
+Individuals with a similar profile are grouped together.
+```{r}
+fviz_pca_ind(x,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T,     # Avoid text overlapping,
+             max.overlaps = Inf
+             )
+```
+
+## Graph of variables. 
+Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+```{r}
+fviz_pca_var(x,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+## Biplot of individuals and variables
+```{r}
+fviz_pca_biplot(x, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+```
+ 
+
+## K-means with PCA results
+```{r}
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(x)$coord)
+
+head(ind.coord)
+```
+
+
+```{r}
+kc <- kmeans(ind.coord, 3)
+
+plot(ind.coord[,1:2],col=factor(kc$cluster))
+```
+```{r}
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(k$cluster)
+```
+
+```{r}
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(x), 1)
+variance.percent <- eigenvalue$variance.percent
+
+head(eigenvalue)
+```
+
+
+```{r}
+library(ggpubr)
+
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+# K-means with PCA results (not normalized)
+
+## Clustering PCA results
+
+## PCA
+```{r}
+# Principal components
+x <- prcomp(brca_rnaseq_t, scale = FALSE)
+```
+
+```{r}
+#Visualize eigenvalues (scree plot). Show the percentage of variances explained by each principal component.
+fviz_eig(x)
+```
+## Graph of individuals. 
+Individuals with a similar profile are grouped together.
+```{r}
+fviz_pca_ind(x,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T,     # Avoid text overlapping,
+             max.overlaps = Inf
+             )
+```
+
+## Graph of variables. 
+Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+```{r}
+fviz_pca_var(x,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+## Biplot of individuals and variables
+```{r}
+fviz_pca_biplot(x, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+```
+ 
+
+## Getting the coordinates of the PCA results as df
+```{r}
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(x)$coord)
+
+head(ind.coord)
+```
+
+## K means
+```{r}
+kc <- kmeans(ind.coord, 3)
+
+plot(ind.coord[,1:2],col=factor(kc$cluster))
+```
+
+```{r}
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(k$cluster)
+```
+
+```{r}
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(x), 1)
+variance.percent <- eigenvalue$variance.percent
+
+head(eigenvalue)
+```
+
+
+```{r}
+library(ggpubr)
+
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
 ```
 
 
