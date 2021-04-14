@@ -1,0 +1,351 @@
+---
+title: "Code_template_normalized"
+author: "Victoria Rios"
+date: "12/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Análisis de datos de BRCA TN TCGA
+
+Primero definimos la opción para no se lean los strings como factores.
+
+```{r}
+options(stringsAsFactors = F)
+```
+
+Primero leemos los datos clínicos.
+```{r}
+brca_clin <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", header = F,
+row.names = 1, as.is = T)
+```
+
+Obtenemos los datos para los 3 receptores en los renglones 24, 29 y 1160.
+```{r}
+print(rownames(brca_clin)[c(24,29,1160)])
+```
+
+Índices de muestras triple negativo (TN)
+```{r}
+index_TN <- which(as.character(brca_clin[24,]) == "negative" &
+as.character(brca_clin[29,]) == "negative" &
+as.character(brca_clin[1160,]) == "negative")
+```
+
+Filtramos para tener datos sólo de los TN y obtenemos las claves de las muestras
+
+```{r}
+brca_clin <- brca_clin[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[21,]))
+```
+
+Leer datos de RNA-seq
+```{r}
+f <- "BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T, row.names = 1)
+brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+```
+
+Extraer gene symbols
+```{r}
+gene_symbols <- as.character(sapply(rownames(brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+```
+
+Eliminar renglones con gene symbol igual a “?”
+```{r}
+brca_rnaseq <- brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+Ver el tipo de muestra de acuerdo al TCGA barcode y quitar los normales (tipo “11”) https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+Hacer match entre las muestras TN y los de RNAseq
+```{r}
+tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
+substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
+tn_match_na <- which(is.na(tn_match))
+brca_clin <- brca_clin[,-tn_match_na]
+tn_samples <- tn_samples[-tn_match_na]
+tn_match <- tn_match[-tn_match_na]
+brca_rnaseq <- brca_rnaseq[,tn_match]
+
+brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+
+```
+
+# Normalization of the dataset
+```{r}
+brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+```
+
+# Clustering PCA results (normalized)
+
+## PCA
+```{r}
+# Principal components
+x <- prcomp(brca_rnaseq_n, scale = FALSE)
+```
+
+```{r}
+library(factoextra)
+
+#Visualize eigenvalues (scree plot). Show the percentage of variances explained by each principal component.
+fviz_eig(x)
+```
+## Graph of individuals. 
+Individuals with a similar profile are grouped together.
+```{r}
+fviz_pca_ind(x,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T,     # Avoid text overlapping,
+             max.overlaps = Inf
+             )
+```
+## Re-labeling the patients IDs
+```{r}
+# We check that the patient ID doesn't repeat
+temp <- table(x[["x"]])
+
+isTRUE(any(temp > 1)) # if the result is FALSE, they appear only once
+```
+We save the original IDs in another list inside of x
+```{r}
+orig_IDs <- matrix(row.names(x[["x"]]), ncol = 1) # we store the original IDs
+short_IDs <- as.character(matrix(data = 1:nrow(x[["x"]]), ncol = 1)) # we store the short IDs
+
+IDs <- cbind(orig_IDs, short_IDs) # we bind them in the same matrix
+
+
+x[["IDs"]] <- IDs # We append the new IDs matrix to the x list
+```
+
+We proceed to assign a unique number to each patient
+```{r}
+row.names(x[["x"]]) <- short_IDs
+
+head(x[["x"]])
+```
+
+We plot again to visualize the short IDs of each patient
+```{r}
+fviz_pca_ind(x,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T,     # Avoid text overlapping,
+             max.overlaps = Inf
+             )
+```
+
+## Graph of variables. 
+Positive correlated variables point to the same side of the plot. Negative correlated variables point to opposite sides of the graph.
+```{r}
+fviz_pca_var(x,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+             )
+```
+
+## Biplot of individuals and variables
+```{r}
+fviz_pca_biplot(x, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+                )
+```
+ 
+
+## K-means with PCA results --------------------------------------------------------------------
+
+```{r}
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(x)$coord)
+
+head(ind.coord)
+```
+# Let's find the optimal K value for our data
+
+# 1. Elbow method
+```{r}
+library(purrr)
+
+# function to compute total within-cluster sum of square 
+wss <- function(k) {
+  kmeans(ind.coord, k, nstart = 10 )$tot.withinss
+}
+
+# Compute and plot wss for k = 1 to k = 15
+k.values <- 1:15
+
+# extract wss for 2-15 clusters
+wss_values <- map_dbl(k.values, wss)
+
+plot(k.values, wss_values,
+       type="b", pch = 19, frame = FALSE, 
+       xlab="Number of clusters K",
+       ylab="Total within-clusters sum of squares")
+```
+## Elbow method (Automatic)
+```{r}
+fviz_nbclust(ind.coord, kmeans, method = "wss") +
+  labs(subtitle = "Elbow method")
+```
+
+# 2. Average Silhouette Method (Manual)
+ A high average silhouette width indicates a good clustering. The average silhouette method computes the average silhouette of observations for different values of k. The optimal number of clusters k is the one that maximizes the average silhouette over a range of possible values for k.
+```{r}
+library(cluster)
+
+# function to compute average silhouette for k clusters
+avg_sil <- function(k) {
+  km.res <- kmeans(ind.coord, centers = k, nstart = 25)
+  ss <- silhouette(km.res$cluster, dist(ind.coord))
+  mean(ss[, 3])
+}
+
+# Compute and plot wss for k = 2 to k = 15
+k.values <- 2:15
+
+# extract avg silhouette for 2-15 clusters
+avg_sil_values <- map_dbl(k.values, avg_sil)
+
+plot(k.values, avg_sil_values,
+       type = "b", pch = 19, frame = FALSE, 
+       xlab = "Number of clusters K",
+       ylab = "Average Silhouettes")
+```
+## Average silhouette (Automatic)
+```{r}
+fviz_nbclust(ind.coord, kmeans, method = "silhouette")+
+  labs(subtitle = "Silhouette method")
+```
+#3. Gap Statistic Method
+```{r}
+# compute gap statistic
+gap_stat <- clusGap(ind.coord, FUN = kmeans, nstart = 25,
+                    K.max = 10, B = 50)
+# Print the result
+print(gap_stat, method = "firstmax")
+```
+```{r}
+# We visualize the K value suggestion for this method
+fviz_gap_stat(gap_stat) +
+  labs(subtitle = "Gap statistic method")
+```
+
+# Results
+With most of these approaches suggesting 2 as the number of optimal clusters, we can perform the final analysis and extract the results using 2 clusters.
+
+```{r}
+kc <- kmeans(ind.coord, centers = 2, nstart = 25)
+
+plot(ind.coord[,1:2],col=factor(kc$cluster))
+```
+
+```{r}
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(kc$cluster)
+```
+
+```{r}
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(x), 1)
+variance.percent <- eigenvalue$variance.percent
+
+head(eigenvalue)
+```
+
+
+```{r}
+library(ggpubr)
+
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+# Comparing the results with different K values
+
+```{r}
+ind.coord_k2 <- ind.coord
+ind.coord_k3 <- ind.coord
+ind.coord_k4 <- ind.coord
+ind.coord_k5 <- ind.coord
+
+k2 <- kmeans(ind.coord_k2, centers = 2, nstart = 25)
+k3 <- kmeans(ind.coord_k3, centers = 3, nstart = 25)
+k4 <- kmeans(ind.coord_k4, centers = 4, nstart = 25)
+k5 <- kmeans(ind.coord_k5, centers = 5, nstart = 25)
+
+# Add clusters obtained using the K-means algorithm
+ind.coord_k2$cluster <- factor(k2$cluster)
+ind.coord_k3$cluster <- factor(k3$cluster)
+ind.coord_k4$cluster <- factor(k4$cluster)
+ind.coord_k5$cluster <- factor(k5$cluster)
+
+
+
+# plots to compare
+plot(ind.coord[,1:2],col=factor(k2$cluster))
+plot(ind.coord[,1:2],col=factor(k3$cluster))
+plot(ind.coord[,1:2],col=factor(k4$cluster))
+plot(ind.coord[,1:2],col=factor(k5$cluster))
+
+```
+```{r}
+ggscatter(
+  ind.coord_k2, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+```{r}
+ggscatter(
+  ind.coord_k3, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+```{r}
+ggscatter(
+  ind.coord_k4, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+```{r}
+ggscatter(
+  ind.coord_k5, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+
+
