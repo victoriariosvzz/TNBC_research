@@ -4,9 +4,7 @@
 Se encuentra en el archivo con extensión .Rproj en formato Rmarkdown
 
 ## Data frames
-Se encuentran en carpetas zip, excepto la que contiene los datos RNASeq de todos los pacientes, ya que excede la capacidad de 25MB de github, pero se encuentra en el drive del projecto: [https://drive.google.com/drive/folders/1jslFtYwAlzpFnOmgiztPSmCKdHo6nvm5?usp=sharing]
+- Avances en Drive: [https://drive.google.com/drive/folders/1fC1UDR0MzMiU_F1hziiUIvK2-CD9qLj_?usp=sharing]
 
 **Actualización:** 
-- Aplicación de diferentes algoritmos de clustering a los datos de rnaseq (k-means, hierarchial y heatmaps)
-- Visualización de los clusters resultantes por cada algoritmo
-- Basado en el siguiente ebook de github: https://rafalab.github.io/dsbook/ 
+- A continuación adjunto los avances que he realizado hasta el momento, aún tengo algunas dudas acerca del tipo de distancia a utilizar, por el momento seleccioné 'euclidean' por ser lo recomendado en la documentación revisada. Además, probé 3 métodos para seleccionar el número de clusters "adecuado" y la sugerencia fue de 2. Al final decidí mostrar visualmente los clusters al seleccionar K = 2, 3, 4 y 5. 
