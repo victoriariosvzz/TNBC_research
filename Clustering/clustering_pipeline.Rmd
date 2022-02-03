@@ -3,8 +3,8 @@ title: "TNBC_pipeline"
 author: "Victoria Rios"
 date: "14/6/2021"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -45,8 +45,6 @@ Filtering to obtain only Triple Negative data and obtain the key of the samples 
 ```{r}
 brca_clin <- raw_brca_clin[,index_TN]
 tn_samples <- toupper(as.character(brca_clin[21,])) # patient barcode row
-
-print(length(tn_samples))
 ```
 
 Reading RNAseq data
@@ -174,8 +172,7 @@ data_pca <- pca(brca_rnaseq_n,legendtextsize = 10,axistextsize = 10,dotsize=2)
 Performing the consensus clustering on the normalized data
 ```{r}
 # for vignette
-# TODO: check if we can use data_pca in consensus clustering
-res <- M3C(data_pca, removeplots = TRUE, iters=25, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
+res <- M3C(t(brca_rnaseq_n), removeplots = TRUE, iters=25, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
 
 optimal_k_pac = max(res[["assignments"]]);
 ```
@@ -429,7 +426,36 @@ mut_matrix_rna <- mut_matrix_rna[which(mut_matrix_rna_count > 9),]
 We run a t-test to know which genes change according to the mutations
 ```{r}
 
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for(i in 1:nrow(mut_matrix_rna)){
+#for(i in 1:2){
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
 
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+aux_test <- t.test(formula=exp~mut, data=data.frame(mut=mut_matrix_rna[i,],
+exp=rna_mut[x,]));
+
+aux_test$p.value
+}))
+
+# appending each test into a vector
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+# appending each name into a vector
+mut_rna_test_names <- c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i], rownames(rna_mut), sep="_"))
+
+}
+
+# we save the P values and FDR of each test
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
 
 ```
 
@@ -638,32 +664,428 @@ for(gene in 1:nrow(cluster_mut_matrix_rna_t)){
 
 ```
 
+# TODO: Fisher test and contigency tables from cluster_mut_matrix_rna
+
+We run a t-test to know which genes change according to the mutations
 ```{r}
-set.seed(1234)
-df <- data.frame(
-  sex=factor(rep(c("F", "M"), each=200)),
-  weight=round(c(rnorm(200, mean=55, sd=5), rnorm(200, mean=65, sd=5)))
-  )
-head(df)
+
+cluster_mut_rna_test <- c()
+cluster_mut_rna_test_names <- c()
+
+cluster_rna_mut <- as.matrix(cluster_rna_mut[-c(nrow(cluster_rna_mut)),])
+
+for(i in 1:nrow(cluster_mut_matrix_rna)){
+  
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+cluster_aux_mut_test <- t(sapply(1:nrow(cluster_rna_mut), function(x) {
+
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+cluster_aux_test <- t.test(formula=exp~mut, data=data.frame(mut=cluster_mut_matrix_rna[i,],exp=cluster_rna_mut[x,]));
+
+cluster_aux_test$p.value
+}))
+
+# appending each test into a vector
+cluster_mut_rna_test <- c(cluster_mut_rna_test, 
+                          cluster_aux_mut_test)
+# appending each name into a vector
+cluster_mut_rna_test_names <- c(cluster_mut_rna_test_names,
+                                paste(rownames(cluster_mut_matrix_rna)[i],
+                                rownames(cluster_rna_mut), sep="_"))
+
+}
+
+# we save the P values and FDR of each test
+cluster_mut_rna_test <- cbind(cluster_mut_rna_test, p.adjust(cluster_mut_rna_test))
+colnames(cluster_mut_rna_test) <- c("p_value", "fdr")
+rownames(cluster_mut_rna_test) <- cluster_mut_rna_test_names
+
+# we order the resulting matrix by P value
+cluster_mut_rna_test <- cluster_mut_rna_test[order(cluster_mut_rna_test[,"p_value"]),]
+cluster_mut_rna_test[1:5,]
+
+```
+## TODO: Check the source of mistake above
+
+
+
+# Cluster-Mutation relationships -----------------------------------------------------
+
+Cluster 1
+```{r}
+# Select the cluster number
+k_num <- 1 
+
+# Map the cluster clinical ID
+mapped_id_cluster <- gsub(pattern = "-", replacement = "\\.",x = substr(rownames(cluster[[k_num]]), 1, 16))
+temp <- mut_matrix_rna
+
+# If the mutations' patient IDs are in the clusters' patient IDs, we keep them, otherwise we drop
+for (element_i in 1:length(colnames(temp))){
+  id_mut <- colnames(temp)[element_i]
+  mapped_id_mut <- gsub(pattern = "-", replacement = "\\.",x = substr(id_mut, 1, 16))
+
+  if (mapped_id_mut %in% mapped_id_cluster)
+    temp<-temp
+  else
+    temp <- subset(temp, select = -c(element_i))
+}
+
+# We assign the mutation information to the cluster matrix
+cluster1_mut<- temp
+
+```
+
+Cluster 2
+```{r}
+# Select the cluster number
+k_num <- 2
+
+# Map the cluster clinical ID
+mapped_id_cluster <- gsub(pattern = "-", replacement = "\\.",x = substr(rownames(cluster[[k_num]]), 1, 16))
+temp <- mut_matrix_rna
+
+# If the mutations' patient IDs are in the clusters' patient IDs, we keep them, otherwise we drop
+for (element_i in 1:length(colnames(temp))){
+  id_mut <- colnames(temp)[element_i]
+  mapped_id_mut <- gsub(pattern = "-", replacement = "\\.",x = substr(id_mut, 1, 16))
+
+  if (mapped_id_mut %in% mapped_id_cluster)
+    temp<-temp
+  else
+    temp <- subset(temp, select = -c(element_i))
+}
+
+# We assign the mutation information to the cluster matrix
+cluster2_mut<- temp
+
+```
+
+Count of mutations per cluster
+```{r}
+# Cluster 1
+ cluster1_mut_rna_count <- apply(cluster1_mut,1,sum)
+# in percentage
+ cluster1_mut_rna_p <- cluster1_mut_rna_count/sum(cluster1_mut_rna_count)
+
+
+# Cluster 2
+ cluster2_mut_rna_count <- apply(cluster2_mut,1,sum)
+# in percentage
+ cluster2_mut_rna_p <- cluster2_mut_rna_count/sum(cluster2_mut_rna_count)
+```
+
+Plotting the most relevant mutations
+
+```{r}
+# cluster 1
+cluster1_df <- as.data.frame(cluster1_mut_rna_p[which(cluster1_mut_rna_p > 0.003)])
+
+p<- ggplot(data=cluster1_df, 
+         aes(x=rownames(cluster1_df), y=as.factor(apply(cluster1_df,1,as.character)))) + 
+         geom_bar(stat="identity")
 ```
 
 ```{r}
-library(ggplot2)
-
-library(plyr)
-mu <- ddply(df, "sex", summarise, grp.mean=mean(weight))
-head(mu)
-
-# Interleaved histograms
-ggplot(df, aes(x=weight, color=sex)) +
-  geom_histogram(fill="white", position="dodge")+
-  theme(legend.position="top")
-# Add mean lines
-p<-ggplot(df, aes(x=weight, color=sex)) +
-  geom_histogram(fill="white", position="dodge")+
-  geom_vline(data=mu, aes(xintercept=grp.mean, color=sex),
-             linetype="dashed")+
-  theme(legend.position="top")
-p
+# cluster 2
+cluster2_df <- as.data.frame(cluster2_mut_rna_p[which(cluster2_mut_rna_p > 0.003)])
+ggplotly(
+  ggplot(data=cluster2_df, 
+         aes(x=rownames(cluster2_df), y=as.factor(apply(cluster2_df,1,as.character)))) + 
+         geom_bar(stat="identity")
+)
 ```
+#TODO: create a dataframe with the fields: cluster, ID, mut_count (to make the fisher test)
+
+
+```{r}
+# Clusters df
+clusters_df <- rbind(cluster[[1]],cluster[[2]])
+
+# empty df
+df <- list()
+df_col <- list()
+
+rna_mut_selected <- list()
+rna_mut_selected_names<- list()
+rna_mut_copy <-rna_mut
+
+# Map the cluster clinical ID
+mapped_id_cluster <- gsub(pattern = "-", replacement = "\\.",x = substr(rownames(clusters_df), 1, 16))
+rownames(clusters_df) <- mapped_id_cluster
+
+temp <- mut_matrix_rna
+
+mapped_id_rnamut <- gsub(pattern = "-", replacement = "\\.",x = substr(colnames(rna_mut_copy), 1, 16))
+colnames(rna_mut_copy) <- mapped_id_rnamut
+
+# If the mutations' patient IDs are in the clusters' patient IDs, we keep them, otherwise we drop
+counter<-0
+for (element_i in 1:length(colnames(temp))){
+  id_mut <- colnames(temp)[element_i]
+  mapped_id_mut <- gsub(pattern = "-", replacement = "\\.",x = substr(id_mut, 1, 16))
+
+  if (mapped_id_mut %in% mapped_id_cluster){
+    counter<-counter+1
+  
+    df[[counter]] <- temp[,id_mut]
+    df_col[[counter]] <- clusters_df[mapped_id_mut,]
+    
+    rna_mut_selected[[counter]]<- rna_mut_copy[,mapped_id_mut]
+    rna_mut_selected_names[[counter]]<-clusters_df[mapped_id_mut,]
+}
+}
+
+# We arrange the resulting lists into a matrix
+clusters_mut_matrix<- do.call(cbind, df)
+clusters_mut_matrix_names<-do.call(cbind, df_col)
+
+rna_mut_matrix <- do.call(cbind, rna_mut_selected)
+rna_mut_matrix_names <- do.call(cbind, rna_mut_selected_names)
+
+# we save it as a data frame and assign the cluster number as column name
+clusters_mut<-as.data.frame(clusters_mut_matrix)
+colnames(clusters_mut)<-clusters_mut_matrix_names
+
+rna_mut_selected<-as.data.frame(rna_mut_matrix)
+colnames(rna_mut_selected)<-rna_mut_matrix_names
+
+```
+
+## Mutation count per cluster
+```{r}
+# Mutations in cluster 1
+clus1 <- clusters_mut[,which(colnames(clusters_mut)==1)]
+clus_count1 <- rowSums(clus1)
+
+
+# Mutations in cluster 2
+clus2 <- clusters_mut[,which(colnames(clusters_mut)==2)]
+clus_count2 <- rowSums(clus2)
+
+# Binding both clusters
+clusters_mut_counts <- rbind(clus_count1,clus_count2)
+```
+
+
+## Fisher test count all cluster data
+```{r}
+f_test <-fisher.test(clusters_mut_counts, simulate.p.value = TRUE)
+
+f_test$p.value
+```
+
+## contingency table per mutation
+```{r}
+c<-0
+mut_names <- c()
+
+for (n in 1:length(clus_count1)){
+cont <- rbind(c(clus_count1[n],sum(clus_count1[-n])),c(clus_count2[n],sum(clus_count2[-n])))
+cont_ftest <- fisher.test(cont) 
+cont_pvalue <- cont_ftest$p.value
+
+if(cont_pvalue < 0.05){
+  c<-c+1
+  
+  print(c(names(clus_count1[n]), cont_pvalue))
+  mut_names[c] <- names(clus_count1[n])
+}
+}
+```
+
+
+```{r}
+
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+#for(i in 1:nrow(mut_matrix_rna)){
+for(i in 1:2){
+aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
+
+aux_test <- t.test(formula=exp~mut, data=data.frame(mut=mut_matrix_rna[i,],
+exp=rna_mut[x,]));
+
+aux_test$p.value
+}))
+
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+mut_rna_test_names <- c(mut_rna_test_names,
+
+paste(rownames(mut_matrix_rna)[i], rownames(rna_mut), sep="_"))
+
+}
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
+
+```
+
+
+
+
+# ------------------------------------------------Clustering analysis with mutation information----------------------------------
+# Data Analysis of BRCA TNBC TCGA
+
+
+## Data Pre-processing-----------------------------------------------------------------------------------------------------------
+
+We avoid strings being recognized as factors
+```{r}
+options(stringsAsFactors = F)
+```
+
+Reading clinical data
+```{r}
+raw_brca_clin <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", header = F,
+row.names = 1, as.is = T)
+```
+
+
+Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
+```{r}
+receptor_rows <- c(24,29,1160) # we may need to change the values of the receptor rows according to each specific dataset
+
+print(rownames(raw_brca_clin)[receptor_rows])
+```
+Index of triple negative (TN) samples 
+```{r}
+index_TN <- which(as.character(raw_brca_clin[receptor_rows[1],]) == "negative" &
+as.character(raw_brca_clin[receptor_rows[2],]) == "negative" &
+as.character(raw_brca_clin[receptor_rows[3],]) == "negative")
+```
+
+Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
+```{r}
+brca_clin <- raw_brca_clin[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[21,])) # patient barcode row
+```
+
+Reading Mutation data
+```{r}
+f <- raw_mut
+raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+```
+
+Extracting gene symbols
+```{r}
+gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+```
+
+Drop rows with a gene symbol equal to “?”
+```{r}
+brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+Match between TN samples (clinical) and RNAseq data
+```{r}
+brca_rnaseq_t <- t(mut_matrix_rna) # Transpose of Rnaseq 
+```
+
+## --------------------------------------------------Fisher test------------------------------------------------------------------
+The fisher test helps us to understand whether there exists a significant non-random relationship among categorical variables or not. It is applied on contingency tables because these tables are used to represent the frequency for categorical variables and we can apply it on a matrix as well as matrices have the similar form. In R, we can use fisher.test function to perform the fisher test.
+
+The hypotheses of the Fisher’s exact test are the same than for the Chi-square test, that is:
+
+- Ho: the variables are independent, there is no relationship between the two categorical variables. Knowing the value of one variable does not help to predict the value of the other variable
+- H1: the variables are dependent, there is a relationship between the two categorical variables. Knowing the value of one variable helps to predict the value of the other variable
+
+
+# Creating the contingency matrix ----------
+
+### NOTE: the code below wasn't saved on the last session, I could recover it via .Rhistory and .Rproj.user, I'll format it later on today, but jsut for reference it's added below.
+
+# For the not present mutations (0) and the present mutations (1)
+```{r}
+library("imputeTS")
+
+present_absent_count_df = data.frame()
+present_absent_percentage_df = data.frame()
+
+# for each mutation in the mutations matrix (ID and mutation)
+for (i in 1:nrow(data.frame(mut_matrix_rna))){
+#for (i in 1:5){
+  # name of the current row
+  row_name <- row.names(data.frame(mut_matrix_rna)[i,0])
+ 
+  # we save the count of not present mutations 
+  mut_not_present <- na_replace(data.frame(table(mut_matrix_rna[i,]))['1','Freq'],0)
+  # we save the count of present mutations
+  mut_present <- na_replace(data.frame(table(mut_matrix_rna[i,]))['2','Freq'],0)
+  
+  # matrix with present and absent counts per mutation
+  present_absent_count_df[i,1:2] <- data.frame("present"=c(mut_present), 
+                                               "absent"=c(mut_not_present), 
+                                               row.names = row_name)
+  # matrix with present and absent counts per mutation
+  present_absent_percentage_df[i,1:2] <- data.frame("present"=c(mut_present/ncol(mut_matrix_rna)), 
+                                                    "absent"=c(mut_not_present/ncol(mut_matrix_rna)), 
+                                                    row.names = row_name)
+}
+
+mut_f_test <- fisher.test(present_absent_count_df, simulate.p.value = TRUE)
+
+```
+
+```{r}
+mut_f_test
+```
+
+
+```{r}
+# Present in cluster 1
+
+# Reading clinical data
+mut_rnaseq_match1 <- match(gsub(pattern = "-", replacement = "\\.", x = substr(colnames(mut_matrix), 1, 16)), substr(row.names(cluster[[1]]), 1, 16))
+
+mut_rnaseq_match1
+
+mut_rnaseq_match_NA <- which(is.na(mut_rnaseq_match1))
+mut_matrix_rna <- mut_matrix[,-mut_rnaseq_match_NA]
+mut_rnaseq_match1 <- mut_rnaseq_match1[-mut_rnaseq_match_NA]
+rna_mut <- row.names(cluster[[1]])[mut_rnaseq_match1]
+
+cbind(colnames(mut_matrix_rna)[c(1,20,50,54)], rna_mut[c(1,20,50,54)])
+
+mut_matrix_rna_count <- apply(mut_matrix_rna,1,sum)
+mut_matrix_rna <- mut_matrix_rna[which(mut_matrix_rna_count > 9),]
+
+present_absent_count_df1 = data.frame()
+present_absent_percentage_df1 = data.frame()
+
+for (i in 1:nrow(data.frame(mut_matrix_rna))){
+#for (i in 1:5){
+  row_name <- row.names(data.frame(mut_matrix_rna)[[i]])
+  mut_not_present <- na_replace(data.frame(table(mut_matrix_rna[i]))['1','Freq'],0)
+  mut_present <- na_replace(data.frame(table(mut_matrix_rna[i]))['2','Freq'],0)
+  
+  present_absent_count_df1[i,1:2] <- data.frame("present"=c(mut_present), 
+                                               "absent"=c(mut_not_present), 
+                                               row.names = row_name)
+  present_absent_percentage_df1[i,1:2] <- data.frame("present"=c(mut_present/ncol(mut_matrix_rna)), 
+                                                    "absent"=c(mut_not_present/ncol(mut_matrix_rna)), 
+                                                    row.names = row_name)
+}
+
+```
+
+
+
+
+
+
+
 
