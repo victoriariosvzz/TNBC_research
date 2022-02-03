@@ -1,0 +1,379 @@
+---
+title: "Database exploring"
+output: html_notebook
+---
+
+## A. Datasets list (GSE tracking)
+**----GEO----**
+-  1.	Comprehensive omic characterization of breast cancer in Mexican-Hispanic women
+-  2.	Breast Cancer (METABRIC, Nature 2012 & Nat Commun 2016)
+-  3.	Breast Cancer (CPTAC, Cell 2020)
+-  4.	The Metastatic Breast Cancer Project (Provisional, February 2020)
+
+
+## B. Importing the datasets
+
+### Ref 1. GSE87049
+```{r}
+# We untar the file
+untar(tarfile = "./DB/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "./DB/Ref 1/GSE87049/GSE87049_untar")
+```
+
+```{r}
+# specify the path on your computer where the folder that contains the CEL-files is located
+celpath = "./DB/Ref 1/GSE87049/GSE87049_untar"
+```
+
+```{r}
+library(oligo)
+
+# specify the path on your computer where the folder that contains the CEL-files is located
+celpath = "./DB/Ref 1/GSE87049/GSE87049_untar"
+
+# import CEL files containing raw probe-level data into an R AffyBatch object
+list = list.files(celpath,full.names=TRUE)
+data = read.celfiles(list[0:3])
+```
+
+```{r}
+head(data_raw)
+```
+
+```{r}
+head(data_meta)
+```
+
+
+### Ref 2. 
+```{r}
+# We untar the file
+untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/", list = TRUE)
+untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/")
+```
+Clinical data
+```{r}
+# We avoid strings being recognized as factors
+options(stringsAsFactors = F)
+```
+
+Reading clinical data
+```{r}
+raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 2/Ref2_untar/brca_metabric/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+
+# Re-structuring the header
+names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
+raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
+raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
+raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+
+head(raw_brca_clin_ref2, n = 15)
+```
+Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
+```{r}
+receptor_rows <- c(4,5,8) # we may need to change the values of the receptor rows according to each specific dataset
+
+print(rownames(raw_brca_clin_ref2)[receptor_rows])
+```
+
+Index of triple negative (TN) samples 
+```{r}
+index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "Negative" &
+as.character(raw_brca_clin_ref2[receptor_rows[2],]) == "Negative" &
+as.character(raw_brca_clin_ref2[receptor_rows[3],]) == "Negative")
+
+print(index_TN)
+sprintf("length: %d", length(index_TN))
+```
+
+Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
+```{r}
+brca_clin <- raw_brca_clin_ref2[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[1,])) # patient barcode row
+
+head(tn_samples, n=5)
+```
+Reading RNAseq data
+```{r}
+f <- "./DB/Ref 2/Ref2_untar/brca_metabric/data_cna.txt" 
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
+brca_rnaseq <- t(brca_rnaseq)
+raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+
+head(brca_rnaseq)
+```
+
+Extracting gene symbols
+```{r}
+raw_brca_rnaseq <- raw_brca_rnaseq[3:nrow(raw_brca_rnaseq),]
+gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+
+head(gene_symbols, n=5)
+```
+
+Drop rows with a gene symbol equal to “?”
+```{r}
+brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+# TODO: What to delete here?---- 
+Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+```{r}
+head(tn_samples, n=5)
+```
+
+
+Match between TN samples (clinical) and RNAseq data
+```{r}
+tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
+substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
+tn_match_na <- which(is.na(tn_match))
+brca_clin <- brca_clin[,-tn_match_na]
+tn_samples <- tn_samples[-tn_match_na]
+tn_match <- tn_match[-tn_match_na]
+brca_rnaseq <- brca_rnaseq[,tn_match]
+
+brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+
+```
+
+# Normalization of the dataset
+```{r}
+brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+
+head(brca_rnaseq_n)
+```
+
+
+
+### Ref 3. 
+```{r}
+# We untar the file
+untar(tarfile = "./DB/Ref 3/brca_cptac_2020.tar.gz", exdir = "./DB/Ref 3/Ref3_untar/", list = TRUE)
+untar(tarfile = "./DB/Ref 3/brca_cptac_2020.tar.gz", exdir = "./DB/Ref 3/Ref3_untar/")
+```
+Clinical data
+```{r}
+# We avoid strings being recognized as factors
+options(stringsAsFactors = F)
+```
+
+Reading clinical data
+```{r}
+raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_patient.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+
+# Re-structuring the header
+names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
+raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
+raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
+raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+
+head(raw_brca_clin_ref2, n = 15)
+```
+Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
+```{r}
+receptor_rows <- c(7) # we may need to change the values of the receptor rows according to each specific dataset
+
+print(rownames(raw_brca_clin_ref2)[receptor_rows])
+```
+
+Index of triple negative (TN) samples 
+```{r}
+index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "Positive")
+
+print(index_TN)
+sprintf("length: %d", length(index_TN))
+```
+
+Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
+```{r}
+#TODO: WHat is the barcode in this case?
+
+brca_clin <- raw_brca_clin_ref2[,index_TN]
+tn_samples <- toupper(as.character(names(brca_clin))) # patient barcode row
+
+head(tn_samples, n=5)
+```
+Reading RNAseq data
+```{r}
+f <- "./DB/Ref 3/Ref3_untar/brca_cptac_2020/data_log2_cna.txt" 
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
+brca_rnaseq <- t(brca_rnaseq)
+raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+
+#head(brca_rnaseq, n=3)
+```
+
+Extracting gene symbols
+```{r}
+gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+
+head(gene_symbols, n=5)
+```
+
+Drop rows with a gene symbol equal to “?”
+```{r}
+brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+# TODO: What to delete here?---- 
+Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+```{r}
+head(tn_samples, n=5)
+```
+
+
+Match between TN samples (clinical) and RNAseq data
+```{r}
+tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
+substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
+tn_match_na <- which(is.na(tn_match))
+brca_clin <- brca_clin[,-tn_match_na]
+tn_samples <- tn_samples[-tn_match_na]
+tn_match <- tn_match[-tn_match_na]
+brca_rnaseq <- brca_rnaseq[,tn_match]
+
+brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+
+```
+
+# Normalization of the dataset
+```{r}
+brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+
+head(brca_rnaseq_n)
+```
+
+
+
+### Ref 4. 
+```{r}
+# We untar the file
+untar(tarfile = "./DB/Ref 4/brca_mbcproject_wagle_2017.tar.gz", exdir = "./DB/Ref 4/Ref4_untar/", list = TRUE)
+untar(tarfile = "./DB/Ref 4/brca_mbcproject_wagle_2017.tar.gz", exdir = "./DB/Ref 4/Ref4_untar/")
+```
+
+Clinical data
+```{r}
+# We avoid strings being recognized as factors
+options(stringsAsFactors = F)
+```
+
+Reading clinical data
+```{r}
+raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+
+# Re-structuring the header
+names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
+raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
+raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
+raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+
+head(raw_brca_clin_ref2, n = 15)
+```
+Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
+```{r}
+receptor_rows <- c(14,16,19) # we may need to change the values of the receptor rows according to each specific dataset
+
+print(rownames(raw_brca_clin_ref2)[receptor_rows])
+```
+
+Index of triple negative (TN) samples 
+```{r}
+index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "NEGATIVE" &
+as.character(raw_brca_clin_ref2[receptor_rows[2],]) == "NEGATIVE" &
+as.character(raw_brca_clin_ref2[receptor_rows[3],]) == "NEGATIVE")
+
+print(index_TN)
+sprintf("length: %d", length(index_TN))
+```
+
+Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
+```{r}
+brca_clin <- raw_brca_clin_ref2[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[1,])) # patient barcode row
+
+head(tn_samples, n=5)
+```
+Reading RNAseq data
+```{r}
+f <- "./DB/Ref 2/Ref2_untar/brca_metabric/data_cna.txt" 
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
+brca_rnaseq <- t(brca_rnaseq)
+raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
+
+head(brca_rnaseq)
+```
+
+Extracting gene symbols
+```{r}
+raw_brca_rnaseq <- raw_brca_rnaseq[3:nrow(raw_brca_rnaseq),]
+gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
+unlist(strsplit(x = x, split = "\\|"))[1]))
+
+head(gene_symbols, n=5)
+```
+
+Drop rows with a gene symbol equal to “?”
+```{r}
+brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
+gene_symbols <- gene_symbols[which(gene_symbols != "?")]
+```
+
+# TODO: What to delete here?---- 
+Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
+cancer.gov/Encyclopedia/pages/TCGA_Barcode/
+```{r}
+sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
+brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
+sample_type <- sample_type[-which(sample_type == "11")]
+```
+
+```{r}
+head(tn_samples, n=5)
+```
+
+
+Match between TN samples (clinical) and RNAseq data
+```{r}
+tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
+substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
+tn_match_na <- which(is.na(tn_match))
+brca_clin <- brca_clin[,-tn_match_na]
+tn_samples <- tn_samples[-tn_match_na]
+tn_match <- tn_match[-tn_match_na]
+brca_rnaseq <- brca_rnaseq[,tn_match]
+
+brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+
+```
+
+# Normalization of the dataset
+```{r}
+brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+
+head(brca_rnaseq_n)
+```
+
+
+
+```{r}
+head(data_raw)
+```
