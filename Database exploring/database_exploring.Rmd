@@ -13,42 +13,1704 @@ output: html_notebook
 
 ## B. Importing the datasets
 
-### Ref 1. GSE87049
+## CEL FILES ----------------------------------
+Loading the packages
+```{r}
+library(oligo) 
+library(limma) 
+library(Biobase)
+library(Biostrings)
+library(genefilter)
+<<<<<<< HEAD
+library(affyio)
+```
+
+## GEO Datasets
+### Ref 1. GSE87049 (Subseries GSE75678)
 ```{r}
 # We untar the file
-untar(tarfile = "./DB/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "./DB/Ref 1/GSE87049/GSE87049_untar")
+untar(tarfile = "./TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "../TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar")
 ```
 
 ```{r}
 # specify the path on your computer where the folder that contains the CEL-files is located
-celpath = "./DB/Ref 1/GSE87049/GSE87049_untar"
+celpath = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar"
 ```
 
+```{r}
+read.celfile.header <- function(filename,info=c("basic","full"),verbose=FALSE){
+  compress <- FALSE
+
+  info <- match.arg(info)
+
+  if (info == "basic"){
+    if (verbose)
+      cat("Reading", filename, "to get header information.\n")
+    headdetails <- .Call("ReadHeader", filename, PACKAGE="affyio")
+    names(headdetails) <- c("cdfName","CEL dimensions")
+    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
+  } else {
+    if (verbose)
+      cat("Reading", filename, "to get full header information.\n")
+    ### full returns greater detailed information from the header. Exact details differ depending on the file format.
+    headdetails <- try(.Call("ReadHeaderDetailed", filename, PACKAGE="affyio"))
+    if (is(headdetails, "try-error"))
+        stop("Failed to get full header information for ", filename)
+    names(headdetails) <- c("cdfName","CEL dimensions","GridCornerUL","GridCornerUR","GridCornerLR","GridCornerLL","DatHeader","Algorithm","AlgorithmParameters","ScanDate")
+    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
+    
+
+    if (nchar(headdetails$ScanDate) == 0){
+      # try to extract it from the DatHeader
+      DatHeaderSplit <- strsplit(headdetails$DatHeader," ")
+      Which.Date <- grep("[0-9]*/[0-9]*/[0-9]*",DatHeaderSplit[[1]])
+      Which.Time <-  grep("[0-9]*:[0-9]*:[0-9]*",DatHeaderSplit[[1]])
+      headdetails$ScanDate <- paste(DatHeaderSplit[[1]][Which.Date],DatHeaderSplit[[1]][Which.Time])
+    }
+  }
+  return(headdetails)
+}
+
+```
+
+
+```{r}
+## import CEL files containing raw probe-level data into an R
+# Check the chip type of the bunch of CEL files
+list = list.files(celpath, full.names=TRUE, pattern = "CEL.gz")
+length(list)
+#table(sapply(list, function(x) read.celfile.header(x)$cdfName))
+```
+
+We should use the following packages to read different types of chip types:
+-  oligo >> for newer arrays (if you work with newer arrays (HTA, Gene ST...))
+-  affy >> for older arrays  (3' arrays)
+
+```{r}
+# We separate the CEL files in different batches according to their chip type (to read them separately)
+ff <- split(list, sapply(list, function(x) read.celfile.header(x)$cdfName))
+summary(ff)
+```
+
+We proceed to read the cel files and store them into an AffyBatch object
 ```{r}
 library(oligo)
+data_SNP = read.celfiles(ff$GenomeWideSNP_6[0:50])
+data_HuGene = read.celfiles(ff$`HuGene-1_0-st-v1`)
+```
 
+**Slots of the AffyBatch explained**
+cdfName:
+Object of class character representing the name of CDF file associated with the arrays in the AffyBatch.
+
+nrow:
+Object of class integer representing the physical number of rows in the arrays.
+
+ncol:
+Object of class integer representing the physical number of columns in the arrays.
+
+assayData:
+Object of class AssayData containing the raw data, which will be at minimum a matrix of intensity values. This slot can also hold a matrix of standard errors if the 'sd' argument is set to TRUE in the call to ReadAffy.
+
+phenoData:
+Object of class AnnotatedDataFrame containing phenotypic data for the samples.
+
+annotation
+A character string identifying the annotation that may be used for the ExpressionSet instance.
+
+protocolData:
+Object of class AnnotatedDataFrame containing protocol data for the samples.
+
+featureData
+Object of class AnnotatedDataFrame containing feature-level (e.g., probeset-level) information.
+
+experimentData:
+Object of class "MIAME" containing experiment-level information.
+
+.__classVersion__:
+Object of class Versions describing the R and Biobase version number used to create the instance. Intended for developer use.
+
+Retrieving intensities of each AffyBatch object generated from the CEL files.
+```{r}
+expr_SNP <- oligo::exprs(data_SNP)
+expr_HuGene <- oligo::exprs(data_HuGene)
+```
+
+Checking the first 3 rows
+```{r}
+expr_SNP[1:3,]
+expr_HuGene[1:3,]
+```
+
+**Key COncept**
+Each gene or portion of a gene is represented by 11 to 20 oligonucleotides of 25 base-pairs.
+
+Perfect match
+(PM): A 25-mer complementary to a reference 
+sequence of interest (e.g., part of a gene)
+
+Since we will only work with PM probes, we might want to look at the intensities of the PM probes only using the pm() method.
+
+*Note about pm() and exprs() methods:*
+pm() reorders the rows while exprs() and intensity() retrieve the intensities of the probes in the original order (as they occur in the CEL files). 
+```{r}
+#The command below will retrieve the PM intensities of the first 5 rows of the data set.
+
+# TODO data_SNP cannot be allocated to run this method
+#oligo::pm(data_SNP)[1:5,] 
+oligo::pm(data_HuGene)[1:2,]
+
+```
+pm() returns probe numbers (column at the left). These probe numbers refer to the original order of the probes. e.g.
+```{r}
+# We can use this probe number to check if exprs() and pm() return the same values.
+expr_HuGene[1056,1:3]
+oligo::pm(data_HuGene)[1,1:3]
+
+```
+The first column of pm(data) contains *probe numbers* not *probe set IDs* !
+
+It is much more useful to retrieve intensities based on probe set ID then on location in the CEL file. Often we'll want to retrieve the data of all the probes in the probe set that represents our favourite gene.
+```{r}
+oligo::probeNames(data_HuGene)
+```
+
+We can ask for the intensity of all PM probes of a probe set using the probe set ID, e.g. for probe set ID 245027_at
+```{r}
+
+oligo::pm(data_HuGene,"7981326")[1:5,]
+
+```
+
+To plot the intensities of all the probes of a probe set, we will use ggplot().
+```{r}
+probeNrs = rep(rownames(pm(data_HuGene,"7981326")),6)
+ints=c(pm(data_HuGene,"7981326")[,1],pm(data_HuGene,"7981326")[,2],pm(data_HuGene,"7981326")[,3],pm(data_HuGene,"7981326")[,4],pm(data_HuGene,"7981326")[,5],pm(data_HuGene,"7981326")[,6])
+```
+
+Now we will combine the vector with the probe IDs and the vector with the intensities into a data frame (= matrix in which columns contain data of different types: numbers, text, boolean...). The data frame contains two columns: one is called probeNrs and one is called ints.
+```{r}
+library(ggplot2)
+pset = data.frame(probeNrs=probeNrs,ints=ints)
+pset$PNs = factor(pset$probeNrs)
+scatter = ggplot2::ggplot(pset,aes(PNs,ints))
+scatter + geom_point() + labs(x="Probe Number",y="Intensity of PM probe")
+```
+
+**Retrieving sample annotation using affy**
+Apart from the expression data itself, microarray data sets need to include information about the samples that were hybridized to the arrays, e.g. sample labels. AffyBatch objects have several slots (characteristics). One of them is called phenoData. It contains labels for the samples. Despite the name, there is no implication that the labels should be phenotypic, in fact they often indicate genotypes such as wild-type or knockout. They can also contain other types of information about the samples e.g. which samples are replicates, which samples were scanned by the same scanner, the amount of RNA that was hybridized to the arrays…
+However, for most data sets the phenoData has not been defined.
+```{r}
+ph = data_HuGene@phenoData
+ph #ph is a dataframe
+```
+We find the names of the columns in varLabels: there is one column named sample.To look at all the data in the data frame ask for the data slot.
+```{r}
+ph@data
+```
+
+If phenoData contains no information: CEL-files are given an index 1-n (n = total number of files). You can give the samples more accurate names so these can be used in the plots that we are going to create later on. We will see how to do this when we create the plots.
+
+**Retrieving probe anotation**
+Microarray data sets should include information on the probes. AffyBatches have a slot called featureData, a data frame that contains labels for the probes. For most data sets (also public data coming from GEO or ArrayExpress) the featureData has not been defined.
+```{r}
+feat = data_HuGene@featureData
+feat
+feat@data
+```
+
+**Retrieving experiment annotation**
+Microarray data sets should also include information on the experiment. AffyBatches have a slot for this called experimentData. For most data sets (also public data coming from GEO or ArrayExpress) the featureData has not been defined.
+```{r}
+exp = data_HuGene@experimentData
+exp
+```
+To retrieve the IDs of the probe sets that are represented on the arrays 
+```{r}
+featureNames(data_HuGene)
+```
+**Creating microarray pictures**
+For each array (sample) we will generate a figure containing the image of that array. The sample names that were specified in the phenoData are indeed used as labels in the figure.
+```{r}
+## To display the images in R-------
+op = par(mfrow = c(2,3))
+for (i in 10:16){image(data_HuGene[,i],main=ph@data$sample[i])}
+
+## To save the images in path-------
+# for (i in 1:6)
+# {
+# name = paste("image",i,".jpg",sep="")
+# jpeg(name)
+# image(data_HuGene[,i],main=ph@data$sample[i])
+# dev.off()
+# }
+```
+
+**MA Plots per array (sample)**
+Ideally, the cloud of data points should be centered around M=0 (blue line). This is because we assume that the majority of the genes is not DE and that the number of upregulated genes is similar to the number of downregulated genes. Additionally, the variability of the M values should be similar for different A values (average intensities). You see that the spread of the cloud increases with the average intensity: the loess curve (red line) moves further and further away from M=0 when A increases. To remove (some of) this dependency, we will normalize the data.
+
+```{r}
+op = par(mfrow = c(2,3))
+
+# MA plot not normalized
+for (i in 1:3){MAplot(rma(data_HuGene[,1:20]),which=i)}
+
+# MA plot normalized
+for (i in 1:3){MAplot(rma(data_HuGene[,1:20]),which=i)}
+```
+**Identification of DE genes (differentially expressed)**
+Identification of DE genes is not done by the affy nor the oligo package but by the limma package. Limma uses the output of the rma() method (data.rma) as input. Since the output of the rma() method is the same in the affy and in the oligo package, limma works well with both packages. This means that all following code is valid for all normalized Affymetrix data regardless of the package that was used for normalization.
+
+The limma package contains functions for using a t-test or an ANOVA to identify differential expression in microarray data. These functions can be used for all array platforms and work even for microarray data with complex designs of multiple samples. The central idea is to fit a linear model to the expression data of each gene. The expression data can be log-ratios or log-intensities. Computational methods are used to borrow information across genes making the analyses stable even for experiments with a small number of arrays. Limma is designed to be used in conjunction with the affy package.
+
+```{r}
+library(gcrma)
+library(hgu133a2frmavecs) #cdfname="HGU133A_HS_ENTREZG"
+```
+
+```{r}
+
+#Set CDF to use
+cdf="HGU133A_HS_ENTREZG"
+
+#Read in the raw data from specified dir of CEL files
+raw.data.ALL=ReadAffy(verbose=TRUE, celfile.path=celpath, cdfname=cdf)
+
+#perform GCRMA normalization
+data.gcrma.norm.ALL=gcrma(raw.data.ALL)
+
+#Get the important stuff out of the data - the expression estimates for each array
+gcrma.ALL=exprs(data.gcrma.norm.ALL)
+
+#Remove control probes
+gcrma.ALL=gcrma.ALL[1:12065,] #Remove Affy control probes, custom CDF
+
+#Format values to 5 decimal places
+gcrma.ALL=format(gcrma.ALL, digits=5)
+
+#Map probes to gene symbols
+#To see all mappings for Entrez gene db associated with customCDF
+ls("package:hgu133ahsentrezg.db") #customCDF
+
+#Extract probe ids, entrez symbols, and entrez ids
+probes.ALL=row.names(gcrma.ALL)
+symbol.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgSYMBOL))
+ID.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgENTREZID))
+
+#Combine gene annotations with raw data
+gcrma.ALL=cbind(probes.ALL,ID.ALL,symbol.ALL,gcrma.ALL)
+
+#Write GCRMA-normalized, mapped data to file
+write.table(gcrma.ALL, file = "ALL_gcrma.txt", quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
+```
+
+
+### Ref 1. GSE87049 (Subseries GSE75678) using series_matrix.txt file
+```{r}
+library("GEOquery")
+```
+
+```{r}
+gse=getGEO(filename="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE75678_series_matrix.txt.gz", getGPL = T)
+```
+
+```{r}
+View(gse)
+```
+
+```{r}
+length(gse)
+```
+```{r}
+## print the sample information
+pData(gse)
+```
+
+```{r}
+## print the gene annotation
+#fData(gse)$GENE_SYMBOL
+fData(gse)[fData(gse)$GENE_SYMBOL=="PPIA",]
+```
+
+```{r}
+match_gene <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\GSE575678\\GSE575678_clean_with_IDs_only.csv")
+```
+
+
+#### Removing duplicate gene symbols
+We will stay with the most expressed genes only
+```{r}
+## Verifying if GENE SYMBOLS have repetitions
+table(match_gene$GENE_SYMBOL)
+```
+```{r}
+length(table(match_gene$GENE_SYMBOL))
+```
+
+```{r}
+# We define the function for removing duplicate gene symbols and keep the most expressed only
+
+remove_duplicate_genes<-function(eset, column_of_symbol ,method = "mean"){
+  eset<-as.data.frame(eset)
+  rownames(eset)<-NULL
+
+  dups <- dim(eset)[1] - length(unique(eset[,column_of_symbol]))
+
+  if(dups==0){
+    eset<-tibble:: column_to_rownames(eset,var = column_of_symbol)
+    return(eset)
+  }else{
+    if(method=="mean"){
+      order_index=apply(eset[,setdiff(colnames(eset),column_of_symbol)],1,function(x) mean(x,na.rm=T))
+      eset<-eset[order(order_index,decreasing=F),]
+      eset<-eset %>%dplyr:: distinct(!!sym(column_of_symbol),.keep_all = TRUE) %>%
+        tibble:: column_to_rownames(.,var = column_of_symbol)
+      return(eset)
+    }else if(method == "sd"){
+      order_index = apply(eset[,setdiff(colnames(eset),column_of_symbol)],1,function(x) sd(x,na.rm=T))
+      eset<-eset[order(order_index,decreasing=F),]
+      eset<-eset %>% distinct(!!sym(column_of_symbol),.keep_all = TRUE) %>%
+        tibble:: column_to_rownames(.,var = column_of_symbol)
+      return(eset)
+    }
+  }
+}
+```
+
+
+
+```{r}
+library(tibble)
+
+eset<-remove_duplicate_genes(eset = match_gene,column_of_symbol = "GENE_SYMBOL",method = "mean")
+summary(duplicated(rownames(eset)))
+```
+
+```{r}
+table(rownames(eset))
+```
+
+
+```{r}
+subset(match_gene, GENE_SYMBOL=="PPIA")
+```
+
+
+```{r}
+## print the expression data
+# columns == samples
+# rows == genes
+eset
+```
+#### Check the normalisation and scales used
+For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
+
+-  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
+-  The *summary* function can then be used to print the distributions.
+
+```{r}
+## exprs get the expression levels as a data frame and get the distribution
+summary(eset)
+```
+
+From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
+```{r}
+# Modifying expression data to be normalized with log2
+#exprs(gse) <- log2(exprs(gse)+1)
+
+# 
+boxplot(eset, outline=FALSE)
+```
+
+#### Inspect the clinical variables
+Data submitted to GEO contain sample labels assigned by the experimenters, and some information about the processing protocol. All these data can be extracted by the pData function.
+
+For your own data, you will have to decide which columns will be useful in the analysis. This will include the column giving the main comparison(s) of interest and any potential confounding factors. In this particular dataset it looks like the following columns could be useful to describe our dataset variability and properties.
+characteristics_ch1.5 # age
+characteristics_ch1.6 # race
+characteristics_ch1.7 # histology
+characteristics_ch1.12 # er status
+characteristics_ch1.14 # pr status
+characteristics_ch1.15 # her2 status
+characteristics_ch1.18 # treatment
+```{r}
+library(dplyr)
+
+sampleInfo <- pData(gse)
+sampleInfo
+```
+
+We can use the select function from dplyr to display just these columns of interest. At this stage it will also be useful to rename the columns to something more convenient using the rename function.
+```{r}
+## Let's pick just those columns of interest
+sampleInfo <- select(sampleInfo, 
+                     `gender:ch1`, # gender
+                     `estrogen receptor immunohistochemestry:ch1`, # estrogen receptor immunohistochemestry
+                     `progesteron receptor immunohistochemestry:ch1`, # progesteron receptor immunohistochemestry
+                     `her2 immunohistochemestry:ch1`, # her2 immunohistochemestry: 
+                     `data at diagnosis:ch1`, # data at diagnosis: 
+                     `age at diagnosis:ch1`, # age at diagnosis:
+                     `age at menarche:ch1`, # age at menarche
+                     `breast affected:ch1`, # breast affected: 
+                     `final pathology size in mm:ch1`, # final pathology size in mm: 
+                     `response to treatment:ch1`, # response to treatment:
+                     `final surgery date:ch1`, # final surgery date:
+                     `chemotherapy1:ch1`, # chemotherapy1: 
+                     `date at death:ch1`, # date at death
+                     `histological grade:ch1` # histological grade
+                     
+                     )
+
+## Optionally, rename to more convenient column names
+#sampleInfo <- rename(sampleInfo,
+#                     age=characteristics_ch1.5, # age
+#                     race=characteristics_ch1.6, # race
+#                     histology=characteristics_ch1.7, # histology
+#                     er_status=characteristics_ch1.12, # er status
+#                     pr_status=characteristics_ch1.14, # pr status
+#                     her2_status=characteristics_ch1.15, # her2 status
+#                     treatment=characteristics_ch1.18 # treatment
+#                     )
+```
+
+```{r}
+sampleInfo
+```
+
+```{r}
+sampleInfo[1,"estrogen receptor immunohistochemestry:ch1"]
+sampleInfo[1,"progesteron receptor immunohistochemestry:ch1"]
+sampleInfo[1,"her2 immunohistochemestry:ch1"]
+```
+
+
+Check and create a TNBC status column
+```{r}
+tnbc_col <- c()
+
+for (i in 1:nrow(sampleInfo)){
+  if (isTRUE(sampleInfo[i,"estrogen receptor immunohistochemestry:ch1"]=="Neg" & sampleInfo[1,"progesteron receptor immunohistochemestry:ch1"]=="Neg" & sampleInfo[i,"her2 immunohistochemestry:ch1"]=="Neg")){
+    tnbc_col <- c(tnbc_col, TRUE)
+    print(c(TRUE, i))
+  }else{
+    tnbc_col <- c(tnbc_col, FALSE)
+    print(c(FALSE, i))
+  }
+}
+```
+```{r}
+tnbc_col
+```
+```{r}
+sampleInfo$TNBC_status <- tnbc_col
+sampleInfo
+```
+
+#### Sample clustering and Principal Components Analysis
+Unsupervised analysis is a good way to get an understanding of the sources of variation in the data. It can also identify potential outlier samples.
+
+The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fashion between all samples. This can be then visualised on a heatmap. Among the many options for creating heatmaps in R, the pheatmap library is one of the more popular ones. The only argument it requires is a matrix of numerical values (such as the correlation matrix).
+
+
+```{r}
+# Checking for infinite values that could make our analysis to encounter an error
+is.infinite(exprs(gse)) %>% table()
+```
+
+
+```{r}
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
+
+corMatrix <- cor(eset, use="c")
+pheatmap(corMatrix)   
+```
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+rownames(sampleInfo)
+```
+```{r}
+colnames(corMatrix)
+```
+
+```{r}
+ncol(corMatrix)
+```
+
+```{r}
+## If not, force the rownames to match the columns
+sampleInfo$`histological grade:ch1` <- as.factor(sampleInfo$`histological grade:ch1`)
+sampleInfo$`breast affected:ch1` <- as.factor(sampleInfo$`breast affected:ch1`)
+sampleInfo$`age at diagnosis:ch1` <- as.factor(sampleInfo$`age at diagnosis:ch1`)
+sampleInfo$TNBC_status <- as.factor(sampleInfo$TNBC_status)
+sampleInfo$`response to treatment:ch1` <- as.factor(sampleInfo$`response to treatment:ch1`)
+
+# We check the first 10 samples
+rownames(sampleInfo) <- colnames(corMatrix)
+pheatmap(corMatrix, annotation_col=sampleInfo[c("TNBC_status", "histological grade:ch1", "response to treatment:ch1")])  
+```
+
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+
+pca <- prcomp(t(eset))
+
+## Join the PCs to the sample information
+cbind(sampleInfo, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+
+eset<-remove_duplicate_genes(eset = match_gene, column_of_symbol = "GENE_SYMBOL", method = "mean")
+eset_fData <- fData(gse)[fData(gse)$ID %in% eset$ID,]
+
+full_output <- cbind(eset_fData, eset)
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE75678_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+```{r}
+library(tidyverse)
+
+features <- eset_fData
+#features <- features[!(is.na(features$NAME) | features$NAME==""), ]
+#row.names(features) <- features$NAME
+View(features)
+```
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+features <- select(features, ID, GENE_SYMBOL)
+full_output <- cbind(features, eset)
+#full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE575678_clean_with_IDs_only.csv")
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+sampleInfo$TNBC_status)
+design
+```
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("NoTNBC","TNBC")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+eset<-remove_duplicate_genes(eset = match_gene, column_of_symbol = "GENE_SYMBOL", method = "mean")
+eset$ID <- NULL
+
+summary(eset)
+## calculate median expression level
+#cutoff <- median(eset_noID)
+cutoff <- 7.4
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- eset > cutoff
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+eset_noID <- eset[keep,]
+```
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(eset_noID, design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(eset_noID, design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(eset_noID, design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- fData(gse)
+anno
+```
+
+```{r}
+anno <- select(anno, ID, GENE_SYMBOL)
+fit2$genes <- anno
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, GENE_SYMBOL,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+## Get the results for particular gene of interest
+filter(full_results, GENE_SYMBOL == "FOXC1")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+filter(full_results, adj.P.Val < 0.05, abs(logFC) > 1)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, adj.P.Val < 0.05, abs(logFC) > 1) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE575678_differentially_expressed_genes.csv")
+```
+
+#### Heatmaps of selected genes
+R and Bioconductor have many packages for creating heatmaps. The most popular at the current time ComplexHeatmap and pheatmap (that we will use here).
+
+Creating the heatmap is pretty straightforward. There is a pheatmap function within the pheatmap library, and it just needs to know the matrix of values that you want to plot (say gene_matrix).
+
+**Most differentially-expressed genes**
+We have already created a table of differential expression results, which is ranked according to statistical significance.
+
+To visualise the most differentially-expressed genes, we first need to extract their ID. These IDs should correspond to rows in the expression matrix.
+
+In the code below we introduce a new column to the results which just gives a row number to each gene. We then filter to return data for the top N results. The pull function is used to extract the ID column as a variable.
+```{r}
+## Use to top 20 genes for illustration
+topN <- 20
+
+##
+ids_of_interest <- mutate(full_results, Rank = 1:n()) %>% 
+  filter(Rank < topN) %>% 
+  pull(ID)
+```
+
+In order to label the heatmap in a useful manner we extract the corresponding gene symbols.
+```{r}
+gene_names <- mutate(full_results, Rank = 1:n()) %>% 
+  filter(Rank < topN) %>% 
+  pull(GENE_SYMBOL) 
+```
+
+The expression values for the IDs we have retrieved can be obtained by using the [..] notation to index the expression matrix.
+```{r}
+## Get the rows corresponding to ids_of_interest and all columns
+gene_matrix <- exprs(gse)[ids_of_interest,]
+```
+
+We now make the heatmap. A default colour scheme is used, but can be changed via the arguments. Please don’t use red and green.
+```{r}
+library(pheatmap)
+pheatmap(gene_matrix, labels_row = gene_names)
+```
+
+It is often preferable to scale each row to highlight the differences in each gene across the dataset.
+```{r}
+pheatmap(gene_matrix, labels_row = gene_names, scale="row")
+```
+
+#### User-defined genes of interest
+The procedure is similar to above if you have your own list of genes (e.g. genes from a previous study). The %in% function is used to identify rows whose Symbol matches any member of my_genes. Here we create my_genes manually. If you want to plot the genes belonging to a particular GO term, it might be more efficient to follow the section below.
+
+Depending on the technology used, there might be multiple matches for a particular gene; so we could end up with more IDs than genes. Therefore we repeat the filtering put pull the Symbol column to make sure we can label the rows of the heatmap.
+```{r}
+exprs(gse)["1",]
+
+```
+
+
+```{r}
+my_genes <- c("PRR15", "FOXC1", "FOXA1", "HIST1H1A", "CDK2AP1")
+ids_of_interest <-  filter(full_results, GENE_SYMBOL %in% my_genes) %>% 
+  pull(ID)
+
+ids_of_interest <- sapply(ids_of_interest, as.character)
+
+gene_names <-  filter(full_results,GENE_SYMBOL %in% my_genes) %>% 
+  pull(GENE_SYMBOL)
+```
+
+```{r}
+gene_matrix <- exprs(gse)[ids_of_interest,]
+pheatmap(gene_matrix,
+         labels_row = gene_names,
+         scale="row")
+```
+
+#### TODO Survival Analysis
+In this section we give a brief overview of how to perform a survival analysis from a published dataset. The example dataset in question, although quite old, is a useful example of predicting survival in breast cancer.
+
+You will need to install an extra package, survminer for the survival analysis itself.
+```{r}
+gse=getGEO(filename="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_series_matrix.txt", getGPL = T)
+```
+We are going to be interested in the phenotypic (/clinical) data stored with the dataset, which will unfortunately require some cleaning prior to analysis. This will be quite a laborious process as there are many variables of interest. For your own dataset, you may need to adapt the code accordingly.
+
+To eye-ball the contents we can use the View command in RStudio.
+```{r}
+View(pData(gse))
+```
+
+It seems that most of the useful columns are prefixed by characteristics, so we can use the convenient contains function to select these. characteristics_ch1 and characteristics_ch1.2 are probably not useful, so we will remove these.
+```{r}
+library(dplyr)
+s_data <- pData(gse) %>% 
+  dplyr::select(geo_accession, contains("characteristics"), -characteristics_ch1, -characteristics_ch1.1, -characteristics_ch1.2, -characteristics_ch1.3, -characteristics_ch1.17, -characteristics_ch1.20, -characteristics_ch1.24)
+```
+
+None of the columns have very convenient names, so we will go ahead and rename them.
+```{r}
+s_data <- s_data %>% 
+  dplyr::rename(biopsy_date = characteristics_ch1.4,
+         age = characteristics_ch1.5,
+         race = characteristics_ch1.6,
+         histology = characteristics_ch1.7,
+         prechemo_t = characteristics_ch1.8,
+         prechemo_n = characteristics_ch1.9,
+         bmn_grade = characteristics_ch1.10,
+         er_perc_positive = characteristics_ch1.11,
+         er_status = characteristics_ch1.12,
+         pr_perc_positive = characteristics_ch1.13,
+         pr_status = characteristics_ch1.14,
+         her_2_status = characteristics_ch1.15,
+         her_2_ihc = characteristics_ch1.16,
+         preoperative_treatment = characteristics_ch1.18,
+         treatment_received =characteristics_ch1.19,
+         surgery_type = characteristics_ch1.21,
+         surgery_date = characteristics_ch1.22,
+         post_chemo_size = characteristics_ch1.23)
+```
+
+The columns themselves contain entries that are not particularly convenient for analysis. For example, in the age column we would expect to find the age of patients in years. Instead each entry is prefixed by the string age:, and the same is true for other columns of interest. We can fix this by a performing a global substituion in the offending columns; replacing the prefix with an empty string "". See the help on gsub for more information. The dplyr function mutate will save the update column in the data frame.
+```{r}
+s_data <- s_data %>% 
+  dplyr::mutate(biopsy_date = gsub("biopsy date mmddyy: ", "", biopsy_date, fixed=T),
+         age = as.numeric(gsub("age: ", "", age, fixed=T)),
+         race = gsub("race: ", "", race, fixed=T),
+         histology = gsub("histology: ", "", histology, fixed=T), 
+         prechemo_t = as.numeric(gsub("prechemo t: ", "", prechemo_t, fixed=T)),
+         prechemo_n = as.numeric(gsub("prechemo n: ", "", prechemo_n, fixed=T)),
+         bmn_grade = as.numeric(gsub("bmn grade: ", "", bmn_grade, fixed=T)),
+         er_perc_positive = gsub("er% positive: ", "", er_perc_positive, fixed=T),
+         er_status = gsub("er status: ", "", er_status, fixed=T),
+         pr_perc_positive = gsub("pr% positive: ", "", pr_perc_positive, fixed=T),
+         pr_status = gsub("pr status: ", "", pr_status, fixed=T),
+         her_2_status = gsub("her 2 status: ", "", her_2_status, fixed=T),
+         her_2_ihc = gsub("her 2 ihc: ", "", her_2_ihc, fixed=T),
+         preoperative_treatment = gsub("preoperative treatment: ", "", preoperative_treatment, fixed=T),
+         treatment_received = gsub("treatment received (1=fac, 2=t/fac): ", "", treatment_received, fixed=T),
+         surgery_type = gsub("surgery type: ", "", surgery_type, fixed=T),
+         surgery_date = gsub("surgery date: ", "", surgery_date, fixed=T),
+         post_chemo_size = gsub("post chemo size cm: ", "", post_chemo_size, fixed=T))
+
+```
+
+Finally we can start to fit survival models to the data. For more detailed explanation of the survminer package, the project page has lots of useful information. It is well-known that the Estrogen Receptor (ER) status of a breast cancer is predictive of survival. We have this variable in the er column of s_data, so can fit the model and plot with the following:-
+```{r}
+library(survival)
+library(survminer)
+```
+
+```{r}
+s_data
+```
+
+
+
+```{r}
+fit <- survfit(Surv(surgery_date) ~ er_status, data = s_data)
+ggsurvplot(fit, data = s_data,pval = TRUE)
+```
+
+
+
+
+
+
+### Ref X. GSE20271
+
+```{r}
 # specify the path on your computer where the folder that contains the CEL-files is located
-celpath = "./DB/Ref 1/GSE87049/GSE87049_untar"
-
-# import CEL files containing raw probe-level data into an R AffyBatch object
-list = list.files(celpath,full.names=TRUE)
-data = read.celfiles(list[0:3])
+celpath = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/"
 ```
 
 ```{r}
-head(data_raw)
+read.celfile.header <- function(filename,info=c("basic","full"),verbose=FALSE){
+  compress <- FALSE
+
+  info <- match.arg(info)
+
+  if (info == "basic"){
+    if (verbose)
+      cat("Reading", filename, "to get header information.\n")
+    headdetails <- .Call("ReadHeader", filename, PACKAGE="affyio")
+    names(headdetails) <- c("cdfName","CEL dimensions")
+    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
+  } else {
+    if (verbose)
+      cat("Reading", filename, "to get full header information.\n")
+    ### full returns greater detailed information from the header. Exact details differ depending on the file format.
+    headdetails <- try(.Call("ReadHeaderDetailed", filename, PACKAGE="affyio"))
+    if (is(headdetails, "try-error"))
+        stop("Failed to get full header information for ", filename)
+    names(headdetails) <- c("cdfName","CEL dimensions","GridCornerUL","GridCornerUR","GridCornerLR","GridCornerLL","DatHeader","Algorithm","AlgorithmParameters","ScanDate")
+    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
+    
+
+    if (nchar(headdetails$ScanDate) == 0){
+      # try to extract it from the DatHeader
+      DatHeaderSplit <- strsplit(headdetails$DatHeader," ")
+      Which.Date <- grep("[0-9]*/[0-9]*/[0-9]*",DatHeaderSplit[[1]])
+      Which.Time <-  grep("[0-9]*:[0-9]*:[0-9]*",DatHeaderSplit[[1]])
+      headdetails$ScanDate <- paste(DatHeaderSplit[[1]][Which.Date],DatHeaderSplit[[1]][Which.Time])
+    }
+  }
+  return(headdetails)
+}
+
+```
+
+
+```{r}
+## import CEL files containing raw probe-level data into an R
+# Check the chip type of the bunch of CEL files
+list = list.files(celpath, full.names=TRUE, pattern = "CEL.gz")
+table(sapply(list, function(x) read.celfile.header(x)$cdfName))
+```
+
+We should use the following packages to read different types of chip types:
+-  oligo >> for newer arrays (if you work with newer arrays (HTA, Gene ST...))
+-  affy >> for older arrays  (3' arrays)
+
+```{r}
+# We separate the CEL files in different batches according to their chip type (to read them separately)
+ff <- split(list, sapply(list, function(x) read.celfile.header(x)$cdfName))
+summary(ff)
+```
+
+We proceed to read the cel files and store them into an AffyBatch object
+```{r}
+data_HG = read.celfiles(ff$`HG-U133A`[0:50])
+```
+
+Retrieving intensities of each AffyBatch object generated from the CEL files.
+```{r}
+expr_HG <- oligo::exprs(data_HG)
+```
+
+Checking the first 3 rows
+```{r}
+expr_HG[1:3,]
+```
+
+**Key COncept**
+Each gene or portion of a gene is represented by 11 to 20 oligonucleotides of 25 base-pairs.
+
+Perfect match
+(PM): A 25-mer complementary to a reference 
+sequence of interest (e.g., part of a gene)
+
+Since we will only work with PM probes, we might want to look at the intensities of the PM probes only using the pm() method.
+
+*Note about pm() and exprs() methods:*
+pm() reorders the rows while exprs() and intensity() retrieve the intensities of the probes in the original order (as they occur in the CEL files). 
+```{r}
+#The command below will retrieve the PM intensities of the first 5 rows of the data set.
+
+# TODO data_SNP cannot be allocated to run this method
+#oligo::pm(data_SNP)[1:5,] 
+oligo::pm(data_HG)[1:2,]
+
+```
+pm() returns probe numbers (column at the left). These probe numbers refer to the original order of the probes. e.g.
+```{r}
+# We can use this probe number to check if exprs() and pm() return the same values.
+expr_HG[718,1:3]
+oligo::pm(data_HG)[1,1:3]
+
+```
+The first column of pm(data) contains *probe numbers* not *probe set IDs* !
+
+It is much more useful to retrieve intensities based on probe set ID then on location in the CEL file. Often we'll want to retrieve the data of all the probes in the probe set that represents our favourite gene.
+```{r}
+oligo::probeNames(data_HG)
+```
+
+We can ask for the intensity of all PM probes of a probe set using the probe set ID, e.g. for probe set ID 245027_at
+```{r}
+
+oligo::pm(data_HG,"203307_at")[1:5,]
+
+```
+
+To plot the intensities of all the probes of a probe set, we will use ggplot().
+```{r}
+probeNrs = rep(rownames(oligo::pm(data_HG,"203307_at")),6)
+ints=c(oligo::pm(data_HG,"203307_at")[,1],oligo::pm(data_HG,"203307_at")[,2],oligo::pm(data_HG,"203307_at")[,3],oligo::pm(data_HG,"203307_at")[,4],oligo::pm(data_HG,"203307_at")[,5],oligo::pm(data_HG,"203307_at")[,6])
+```
+Now we will combine the vector with the probe IDs and the vector with the intensities into a data frame (= matrix in which columns contain data of different types: numbers, text, boolean...). The data frame contains two columns: one is called probeNrs and one is called ints.
+```{r}
+library(ggplot2)
+pset = data.frame(probeNrs=probeNrs,ints=ints)
+pset$PNs = factor(pset$probeNrs)
+scatter = ggplot2::ggplot(pset,aes(PNs,ints))
+scatter + geom_point() + labs(x="Probe Number",y="Intensity of PM probe")
+```
+
+**Retrieving sample annotation using affy**
+```{r}
+ph = data_HG@phenoData
+ph #ph is a dataframe
+```
+We find the names of the columns in varLabels: there is one column named sample.To look at all the data in the data frame ask for the data slot.
+```{r}
+ph@data
+```
+
+If phenoData contains no information: CEL-files are given an index 1-n (n = total number of files). You can give the samples more accurate names so these can be used in the plots that we are going to create later on. We will see how to do this when we create the plots.
+
+**Retrieving probe anotation**
+```{r}
+feat = data_HG@featureData
+feat
+feat@data
+```
+
+**Retrieving experiment annotation**
+Microarray data sets should also include information on the experiment. AffyBatches have a slot for this called experimentData. For most data sets (also public data coming from GEO or ArrayExpress) the featureData has not been defined.
+```{r}
+exp = data_HG@experimentData
+exp
+```
+To retrieve the IDs of the probe sets that are represented on the arrays 
+```{r}
+featureNames(data_HG)
+```
+**Creating microarray pictures**
+```{r}
+## To display the images in R-------
+op = par(mfrow = c(2,3))
+for (i in 10:16){image(data_HG[,i],main=ph@data$sample[i])}
+
+## To save the images in path-------
+# for (i in 1:6)
+# {
+# name = paste("image",i,".jpg",sep="")
+# jpeg(name)
+# image(data_HuGene[,i],main=ph@data$sample[i])
+# dev.off()
+# }
+```
+
+**MA Plots per array (sample)**
+
+```{r}
+op = par(mfrow = c(2,3))
+
+# MA plot not normalized
+for (i in 1:3){MAplot(rma(data_HG[,1:20]),which=i)}
+
+# MA plot normalized
+for (i in 1:3){MAplot(rma(data_HG[,1:20]),which=i)}
+```
+**Identification of DE genes (differentially expressed)**
+```{r}
+library(gcrma)
+library(hgu133a2frmavecs) #cdfname="HGU133A_HS_ENTREZG"
 ```
 
 ```{r}
-head(data_meta)
+
+#Set CDF to use
+cdf="HGU133A_HS_ENTREZG"
+
+#Read in the raw data from specified dir of CEL files
+raw.data.ALL=ReadAffy(verbose=TRUE, celfile.path=celpath, cdfname=cdf)
+
+#perform GCRMA normalization
+data.gcrma.norm.ALL=gcrma(raw.data.ALL)
+
+#Get the important stuff out of the data - the expression estimates for each array
+gcrma.ALL=exprs(data.gcrma.norm.ALL)
+
+#Remove control probes
+gcrma.ALL=gcrma.ALL[1:12065,] #Remove Affy control probes, custom CDF
+
+#Format values to 5 decimal places
+gcrma.ALL=format(gcrma.ALL, digits=5)
+
+#Map probes to gene symbols
+#To see all mappings for Entrez gene db associated with customCDF
+ls("package:hgu133ahsentrezg.db") #customCDF
+
+#Extract probe ids, entrez symbols, and entrez ids
+probes.ALL=row.names(gcrma.ALL)
+symbol.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgSYMBOL))
+ID.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgENTREZID))
+
+#Combine gene annotations with raw data
+gcrma.ALL=cbind(probes.ALL,ID.ALL,symbol.ALL,gcrma.ALL)
+
+#Write GCRMA-normalized, mapped data to file
+write.table(gcrma.ALL, file = "ALL_gcrma.txt", quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
 ```
 
 
+### Ref X. GSE20271 using series_matrix.txt file
+```{r}
+library("GEOquery")
+```
+
+```{r}
+gse=getGEO(filename="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_series_matrix.txt", getGPL = T)
+```
+
+```{r}
+View(gse)
+```
+
+```{r}
+length(gse)
+```
+
+```{r}
+## print the sample information
+pData(gse)
+```
+
+```{r}
+## print the gene annotation
+fData(gse)
+```
+
+```{r}
+## print the expression data
+# columns == samples
+# rows == genes
+exprs(gse)
+```
+#### Check the normalisation and scales used
+For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
+
+-  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
+-  The *summary* function can then be used to print the distributions.
+
+```{r}
+## exprs get the expression levels as a data frame and get the distribution
+summary(exprs(gse))
+```
+
+From this output we clearly see that the values go beyond 16, so we will need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
+```{r}
+# Modifying expression data to be normalized with log2
+exprs(gse) <- log2(exprs(gse)+1)
+
+# 
+boxplot(exprs(gse),outline=FALSE)
+```
+
+#### Inspect the clinical variables
+Data submitted to GEO contain sample labels assigned by the experimenters, and some information about the processing protocol. All these data can be extracted by the pData function.
+
+For your own data, you will have to decide which columns will be useful in the analysis. This will include the column giving the main comparison(s) of interest and any potential confounding factors. In this particular dataset it looks like the following columns could be useful to describe our dataset variability and properties.
+characteristics_ch1.5 # age
+characteristics_ch1.6 # race
+characteristics_ch1.7 # histology
+characteristics_ch1.12 # er status
+characteristics_ch1.14 # pr status
+characteristics_ch1.15 # her2 status
+characteristics_ch1.18 # treatment
+```{r}
+library(dplyr)
+
+sampleInfo <- pData(gse)
+sampleInfo
+```
+
+We can use the select function from dplyr to display just these columns of interest. At this stage it will also be useful to rename the columns to something more convenient using the rename function.
+```{r}
+## Let's pick just those columns of interest
+sampleInfo <- select(sampleInfo, 
+                     characteristics_ch1.5, # age
+                     characteristics_ch1.6, # race
+                     characteristics_ch1.7, # histology
+                     characteristics_ch1.12, # er status
+                     characteristics_ch1.14, # pr status
+                     characteristics_ch1.15, # her2 status
+                     characteristics_ch1.18 # treatment
+                     )
+
+## Optionally, rename to more convenient column names
+sampleInfo <- rename(sampleInfo,
+                     age=characteristics_ch1.5, # age
+                     race=characteristics_ch1.6, # race
+                     histology=characteristics_ch1.7, # histology
+                     er_status=characteristics_ch1.12, # er status
+                     pr_status=characteristics_ch1.14, # pr status
+                     her2_status=characteristics_ch1.15, # her2 status
+                     treatment=characteristics_ch1.18 # treatment
+                     )
+```
+
+```{r}
+sampleInfo
+```
+
+Check and create a TNBC status column
+```{r}
+tnbc_col <- c()
+
+for (i in 1:nrow(sampleInfo)){
+  if (isTRUE(sampleInfo[i,"er_status"]=="er status: N" & sampleInfo[i,"pr_status"]=="pr status: N" & sampleInfo[i,"her2_status"]=="her 2 status: N")){
+    tnbc_col <- c(tnbc_col, TRUE)
+    print(c(TRUE, i))
+  }else{
+    tnbc_col <- c(tnbc_col, FALSE)
+    print(c(FALSE, i))
+  }
+}
+```
+```{r}
+tnbc_col
+```
+```{r}
+sampleInfo$TNBC_status <- tnbc_col
+sampleInfo
+```
+
+#### Sample clustering and Principal Components Analysis
+Unsupervised analysis is a good way to get an understanding of the sources of variation in the data. It can also identify potential outlier samples.
+
+The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fashion between all samples. This can be then visualised on a heatmap. Among the many options for creating heatmaps in R, the pheatmap library is one of the more popular ones. The only argument it requires is a matrix of numerical values (such as the correlation matrix).
+
+
+```{r}
+# Checking for infinite values that could make our analysis to encounter an error
+is.infinite(exprs(gse)) %>% table()
+```
+
+```{r}
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
+
+corMatrix <- cor(exprs(gse),use="c")
+pheatmap(corMatrix)   
+```
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+rownames(sampleInfo)
+```
+```{r}
+colnames(corMatrix)
+```
+
+```{r}
+ncol(corMatrix)
+```
+```{r}
+sampleInfo[c("age","TNBC_status")]
+```
+
+
+```{r}
+## If not, force the rownames to match the columns
+sampleInfo$race <- as.factor(sampleInfo$race)
+sampleInfo$treatment <- as.factor(sampleInfo$treatment)
+sampleInfo$age <- as.factor(sampleInfo$age)
+sampleInfo$TNBC_status <- as.factor(sampleInfo$TNBC_status)
+
+# We check the first 10 samples
+rownames(sampleInfo) <- colnames(corMatrix)
+pheatmap(corMatrix[0:10,0:10], annotation_col=sampleInfo[c("TNBC_status", "race", "age")])  
+```
+
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+
+pca <- prcomp(t(tidyr::replace_na(exprs(gse),0)))
+
+## Join the PCs to the sample information
+cbind(sampleInfo, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+full_output <- cbind(fData(gse),exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+```{r}
+features <- fData(gse)
+View(features)
+```
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+# features <- select(features, ID, `Representative Public ID`, `Gene Symbol`, ENTREZ_GENE_ID)
+# full_output <- cbind(features,exprs(gse))
+full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, path="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_clean_with_IDs_only.csv")
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+sampleInfo$TNBC_status)
+design
+```
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("NoTNBC","TNBC")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+summary(exprs(gse))
+
+## calculate median expression level
+cutoff <- median(exprs(gse))
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs(gse) > cutoff
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+gse <- gse[keep,]
+```
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(exprs(gse), design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(exprs(gse),design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(exprs(gse), design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- fData(gse)
+anno
+```
+
+```{r}
+anno <- select(anno, ID, `Representative Public ID`, `Gene Symbol`, ENTREZ_GENE_ID)
+fit2$genes <- anno
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, Gene.Symbol,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+## Get the results for particular gene of interest
+filter(full_results, Gene.Symbol == "XBP1")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+filter(full_results, adj.P.Val < 0.05, abs(logFC) > 1)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, adj.P.Val < 0.05, abs(logFC) > 1) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_differentially_expressed_genes.csv")
+```
+
+#### Heatmaps of selected genes
+R and Bioconductor have many packages for creating heatmaps. The most popular at the current time ComplexHeatmap and pheatmap (that we will use here).
+
+Creating the heatmap is pretty straightforward. There is a pheatmap function within the pheatmap library, and it just needs to know the matrix of values that you want to plot (say gene_matrix).
+
+**Most differentially-expressed genes**
+We have already created a table of differential expression results, which is ranked according to statistical significance.
+
+To visualise the most differentially-expressed genes, we first need to extract their ID. These IDs should correspond to rows in the expression matrix.
+
+In the code below we introduce a new column to the results which just gives a row number to each gene. We then filter to return data for the top N results. The pull function is used to extract the ID column as a variable.
+```{r}
+## Use to top 20 genes for illustration
+topN <- 20
+
+##
+ids_of_interest <- mutate(full_results, Rank = 1:n()) %>% 
+  filter(Rank < topN) %>% 
+  pull(ID)
+```
+
+In order to label the heatmap in a useful manner we extract the corresponding gene symbols.
+```{r}
+gene_names <- mutate(full_results, Rank = 1:n()) %>% 
+  filter(Rank < topN) %>% 
+  pull(Gene.Symbol) 
+```
+
+The expression values for the IDs we have retrieved can be obtained by using the [..] notation to index the expression matrix.
+```{r}
+## Get the rows corresponding to ids_of_interest and all columns
+gene_matrix <- exprs(gse)[ids_of_interest,]
+```
+
+We now make the heatmap. A default colour scheme is used, but can be changed via the arguments. Please don’t use red and green.
+```{r}
+library(pheatmap)
+pheatmap(gene_matrix, labels_row = gene_names)
+```
+
+It is often preferable to scale each row to highlight the differences in each gene across the dataset.
+```{r}
+pheatmap(gene_matrix, labels_row = gene_names, scale="row")
+```
+
+#### User-defined genes of interest
+The procedure is similar to above if you have your own list of genes (e.g. genes from a previous study). The %in% function is used to identify rows whose Symbol matches any member of my_genes. Here we create my_genes manually. If you want to plot the genes belonging to a particular GO term, it might be more efficient to follow the section below.
+
+Depending on the technology used, there might be multiple matches for a particular gene; so we could end up with more IDs than genes. Therefore we repeat the filtering put pull the Symbol column to make sure we can label the rows of the heatmap.
+```{r}
+my_genes <- c("XBP1", "PRKX /// PRKY", "FOXA1", "SCNN1A", "CA12", "GATA3", "CA12")
+ids_of_interest <-  filter(full_results,Gene.Symbol %in% my_genes) %>% 
+  pull(ID)
+
+gene_names <-  filter(full_results,Gene.Symbol %in% my_genes) %>% 
+  pull(Gene.Symbol)
+
+```
+
+```{r}
+gene_matrix <- exprs(gse)[ids_of_interest,]
+pheatmap(gene_matrix,
+         labels_row = gene_names,
+         scale="row")
+```
+
+#### Survival Analysis
+In this section we give a brief overview of how to perform a survival analysis from a published dataset. The example dataset in question, although quite old, is a useful example of predicting survival in breast cancer.
+
+You will need to install an extra package, survminer for the survival analysis itself.
+```{r}
+gse=getGEO(filename="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE20271/GSE20271_series_matrix.txt", getGPL = T)
+```
+We are going to be interested in the phenotypic (/clinical) data stored with the dataset, which will unfortunately require some cleaning prior to analysis. This will be quite a laborious process as there are many variables of interest. For your own dataset, you may need to adapt the code accordingly.
+
+To eye-ball the contents we can use the View command in RStudio.
+```{r}
+View(pData(gse))
+```
+
+It seems that most of the useful columns are prefixed by characteristics, so we can use the convenient contains function to select these. characteristics_ch1 and characteristics_ch1.2 are probably not useful, so we will remove these.
+```{r}
+library(dplyr)
+s_data <- pData(gse) %>% 
+  dplyr::select(geo_accession, contains("characteristics"), -characteristics_ch1, -characteristics_ch1.1, -characteristics_ch1.2, -characteristics_ch1.3, -characteristics_ch1.17, -characteristics_ch1.20, -characteristics_ch1.24)
+```
+
+None of the columns have very convenient names, so we will go ahead and rename them.
+```{r}
+s_data <- s_data %>% 
+  dplyr::rename(biopsy_date = characteristics_ch1.4,
+         age = characteristics_ch1.5,
+         race = characteristics_ch1.6,
+         histology = characteristics_ch1.7,
+         prechemo_t = characteristics_ch1.8,
+         prechemo_n = characteristics_ch1.9,
+         bmn_grade = characteristics_ch1.10,
+         er_perc_positive = characteristics_ch1.11,
+         er_status = characteristics_ch1.12,
+         pr_perc_positive = characteristics_ch1.13,
+         pr_status = characteristics_ch1.14,
+         her_2_status = characteristics_ch1.15,
+         her_2_ihc = characteristics_ch1.16,
+         preoperative_treatment = characteristics_ch1.18,
+         treatment_received =characteristics_ch1.19,
+         surgery_type = characteristics_ch1.21,
+         surgery_date = characteristics_ch1.22,
+         post_chemo_size = characteristics_ch1.23)
+```
+
+The columns themselves contain entries that are not particularly convenient for analysis. For example, in the age column we would expect to find the age of patients in years. Instead each entry is prefixed by the string age:, and the same is true for other columns of interest. We can fix this by a performing a global substituion in the offending columns; replacing the prefix with an empty string "". See the help on gsub for more information. The dplyr function mutate will save the update column in the data frame.
+```{r}
+s_data <- s_data %>% 
+  dplyr::mutate(biopsy_date = gsub("biopsy date mmddyy: ", "", biopsy_date, fixed=T),
+         age = as.numeric(gsub("age: ", "", age, fixed=T)),
+         race = gsub("race: ", "", race, fixed=T),
+         histology = gsub("histology: ", "", histology, fixed=T), 
+         prechemo_t = as.numeric(gsub("prechemo t: ", "", prechemo_t, fixed=T)),
+         prechemo_n = as.numeric(gsub("prechemo n: ", "", prechemo_n, fixed=T)),
+         bmn_grade = as.numeric(gsub("bmn grade: ", "", bmn_grade, fixed=T)),
+         er_perc_positive = gsub("er% positive: ", "", er_perc_positive, fixed=T),
+         er_status = gsub("er status: ", "", er_status, fixed=T),
+         pr_perc_positive = gsub("pr% positive: ", "", pr_perc_positive, fixed=T),
+         pr_status = gsub("pr status: ", "", pr_status, fixed=T),
+         her_2_status = gsub("her 2 status: ", "", her_2_status, fixed=T),
+         her_2_ihc = gsub("her 2 ihc: ", "", her_2_ihc, fixed=T),
+         preoperative_treatment = gsub("preoperative treatment: ", "", preoperative_treatment, fixed=T),
+         treatment_received = gsub("treatment received (1=fac, 2=t/fac): ", "", treatment_received, fixed=T),
+         surgery_type = gsub("surgery type: ", "", surgery_type, fixed=T),
+         surgery_date = gsub("surgery date: ", "", surgery_date, fixed=T),
+         post_chemo_size = gsub("post chemo size cm: ", "", post_chemo_size, fixed=T))
+
+```
+
+Finally we can start to fit survival models to the data. For more detailed explanation of the survminer package, the project page has lots of useful information. It is well-known that the Estrogen Receptor (ER) status of a breast cancer is predictive of survival. We have this variable in the er column of s_data, so can fit the model and plot with the following:-
+```{r}
+library(survival)
+library(survminer)
+```
+
+```{r}
+s_data
+```
+
+```{r}
+fit <- survfit(Surv(surgery_date) ~ er_status, data = s_data)
+ggsurvplot(fit, data = s_data,pval = TRUE)
+```
+
+
+
+
+## Metabric bioconductor datasets
 ### Ref 2. 
 ```{r}
 # We untar the file
-untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/", list = TRUE)
-untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/")
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/", list = TRUE)
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/")
 ```
 Clinical data
 ```{r}
@@ -58,98 +1720,364 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 2/Ref2_untar/brca_metabric/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 2/Ref2_untar/brca_metabric/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
-names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
-raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
-raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
-raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
+raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
 
-head(raw_brca_clin_ref2, n = 15)
-```
-Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
-```{r}
-receptor_rows <- c(4,5,8) # we may need to change the values of the receptor rows according to each specific dataset
-
-print(rownames(raw_brca_clin_ref2)[receptor_rows])
+head(raw_brca_clin, n = 15)
 ```
 
-Index of triple negative (TN) samples 
+Check and create a TNBC status column
 ```{r}
-index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "Negative" &
-as.character(raw_brca_clin_ref2[receptor_rows[2],]) == "Negative" &
-as.character(raw_brca_clin_ref2[receptor_rows[3],]) == "Negative")
+tnbc_col <- c()
 
-print(index_TN)
-sprintf("length: %d", length(index_TN))
-```
-
-Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
-```{r}
-brca_clin <- raw_brca_clin_ref2[,index_TN]
-tn_samples <- toupper(as.character(brca_clin[1,])) # patient barcode row
-
-head(tn_samples, n=5)
-```
-Reading RNAseq data
-```{r}
-f <- "./DB/Ref 2/Ref2_untar/brca_metabric/data_cna.txt" 
-brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
-brca_rnaseq <- t(brca_rnaseq)
-raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
-
-head(brca_rnaseq)
-```
-
-Extracting gene symbols
-```{r}
-raw_brca_rnaseq <- raw_brca_rnaseq[3:nrow(raw_brca_rnaseq),]
-gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
-unlist(strsplit(x = x, split = "\\|"))[1]))
-
-head(gene_symbols, n=5)
-```
-
-Drop rows with a gene symbol equal to “?”
-```{r}
-brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
-gene_symbols <- gene_symbols[which(gene_symbols != "?")]
-```
-
-# TODO: What to delete here?---- 
-Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
-cancer.gov/Encyclopedia/pages/TCGA_Barcode/
-```{r}
-sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
-brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
-sample_type <- sample_type[-which(sample_type == "11")]
+for (i in 1:nrow(raw_brca_clin)){
+  if (isTRUE(raw_brca_clin[i,"ER_STATUS"]=="Negative" & raw_brca_clin[1,"HER2_STATUS"]=="Negative" & raw_brca_clin[i,"PR_STATUS"]=="Negative")){
+    tnbc_col <- c(tnbc_col, TRUE)
+    print(c(TRUE, i))
+  }else{
+    tnbc_col <- c(tnbc_col, FALSE)
+    print(c(FALSE, i))
+  }
+}
 ```
 
 ```{r}
-head(tn_samples, n=5)
+raw_brca_clin$TNBC_status <- tnbc_col
+raw_brca_clin
+```
+
+#### Sample clustering and Principal Components Analysis
+Unsupervised analysis is a good way to get an understanding of the sources of variation in the data. It can also identify potential outlier samples.
+
+The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fashion between all samples. This can be then visualised on a heatmap. Among the many options for creating heatmaps in R, the pheatmap library is one of the more popular ones. The only argument it requires is a matrix of numerical values (such as the correlation matrix).
+
+Reading expression data
+```{r}
+exprs_data <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 2/Ref2_untar/brca_metabric/data_mrna_agilent_microarray.txt", sep = "\t", header = T)
+
+# Re-structuring the header
+#row.names(exprs_data) <- exprs_data$Hugo_Symbol
+exprs_data = exprs_data[,colSums(is.na(exprs_data)) == 0]
+#raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+#raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
+
+hugo_symbols <- exprs_data$Hugo_Symbol
+exprs_data = subset(exprs_data, select = -c(Hugo_Symbol))
+
+head(exprs_data, n = 15)
+```
+
+#### Check the normalisation and scales used
+For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
+
+-  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
+-  The *summary* function can then be used to print the distributions.
+
+```{r}
+## exprs get the expression levels as a data frame and get the distribution
+summary(exprs_data[,0:10])
+```
+
+From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
+```{r}
+# Modifying expression data to be normalized with log2
+# exprs_data <- log2(exprs_data+1)
+
+# 
+boxplot(exprs_data[,0:10],outline=FALSE)
 ```
 
 
-Match between TN samples (clinical) and RNAseq data
 ```{r}
-tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
-substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
-tn_match_na <- which(is.na(tn_match))
-brca_clin <- brca_clin[,-tn_match_na]
-tn_samples <- tn_samples[-tn_match_na]
-tn_match <- tn_match[-tn_match_na]
-brca_rnaseq <- brca_rnaseq[,tn_match]
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
 
-brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
-
+corMatrix <- cor(exprs_data, use="c")
+pheatmap(corMatrix[0:10,0:10])   
+```
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+# first, we replace the - for .
+row.names(raw_brca_clin) <- gsub('-', '.', row.names(raw_brca_clin))
+raw_brca_clin$SAMPLE_ID <- gsub('-', '.', raw_brca_clin$SAMPLE_ID)
+# keep only the samples that we have data for
+raw_brca_clin <- subset(raw_brca_clin, rownames(raw_brca_clin) %in% colnames(corMatrix))
+row.names(raw_brca_clin)
 ```
 
-# Normalization of the dataset
 ```{r}
-brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+colnames(corMatrix)
+```
 
-head(brca_rnaseq_n)
+```{r}
+ncol(corMatrix)
+```
+
+```{r}
+## If not, force the rownames to match the columns
+raw_brca_clin$TNBC_status <- as.factor(raw_brca_clin$TNBC_status)
+raw_brca_clin$GRADE <- as.factor(raw_brca_clin$GRADE)
+raw_brca_clin$TUMOR_STAGE <- as.factor(raw_brca_clin$TUMOR_STAGE)
+raw_brca_clin$TUMOR_SIZE <- as.factor(raw_brca_clin$TUMOR_SIZE)
+
+# We check the first 10 samples
+rownames(raw_brca_clin) <- colnames(corMatrix)
+pheatmap(corMatrix[0:30,0:30], annotation_col=raw_brca_clin[c("TNBC_status", "GRADE", "TUMOR_STAGE")])  
+```
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+library(ggplot2)
+library(dplyr)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(t(exprs_data))
+
+cbind(raw_brca_clin, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+```{r}
+cbind(raw_brca_clin, pca$x) %>% 
+  ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+
+
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+full_output <- cbind(raw_brca_clin, t(exprs_data))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 2/Ref2_untar/brca_metabric/Ref2_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+#features <- select(features, ID, GENE_SYMBOL)
+full_output <- cbind(as.data.frame(hugo_symbols), exprs_data)
+#full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 2/Ref2_untar/brca_metabric/Ref2_clean_with_IDs_only.csv")
+```
+
+```{r}
+length(hugo_symbols)
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+raw_brca_clin$TNBC_status)
+design
+```
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("NoTNBC","TNBC")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+exprs_data[colnames(exprs_data)!="Hugo_Symbol"] = apply(exprs_data[colnames(exprs_data)!="Hugo_Symbol"], 2, function(x) as.numeric(as.character(x)))
+```
+
+
+```{r}
+#summary(exprs_data[colnames(exprs_data)!="Hugo_Symbol",])
+
+## calculate median expression level
+#cutoff <- median(exprs_data[colnames(exprs_data)!="Hugo_Symbol"])
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs_data[colnames(exprs_data)!="Hugo_Symbol"] > 5
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+#gse <- gse[keep,]
+```
+
+```{r}
+exprs_data[,colnames(exprs_data)!="Hugo_Symbol"]
+```
+
+
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(exprs_data, design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(exprs_data,design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(exprs_data, design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- raw_brca_clin
+anno
+```
+
+```{r}
+fit2
+```
+
+
+```{r}
+hugo_symbols_list <- c()
+
+for (i in as.numeric(rownames(fit2))){
+  hugo_symbols_list <- c(hugo_symbols_list, hugo_symbols[i])
+}
+```
+
+```{r}
+nrow(fit2)
+```
+
+
+```{r}
+#anno <- select(anno, SAMPLE_ID)
+fit2$genes <- hugo_symbols_list
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+full_results$P.Value
+## Get the results for particular gene of interest
+filter(full_results, ID == "BMP8A")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 0.05
+
+filter(full_results, P.Value < p_cutoff, abs(logFC) > fc_cutoff)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, P.Value < p_cutoff, abs(logFC) > fc_cutoff) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 2/Ref2_untar/brca_metabric/Ref2_differentially_expressed_genes.csv")
 ```
 
 
@@ -157,8 +2085,8 @@ head(brca_rnaseq_n)
 ### Ref 3. 
 ```{r}
 # We untar the file
-untar(tarfile = "./DB/Ref 3/brca_cptac_2020.tar.gz", exdir = "./DB/Ref 3/Ref3_untar/", list = TRUE)
-untar(tarfile = "./DB/Ref 3/brca_cptac_2020.tar.gz", exdir = "./DB/Ref 3/Ref3_untar/")
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/", list = TRUE)
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/")
 ```
 Clinical data
 ```{r}
@@ -168,108 +2096,369 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_patient.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_patient.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
-names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
-raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
-raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
-raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
+raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
 
-head(raw_brca_clin_ref2, n = 15)
-```
-Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
-```{r}
-receptor_rows <- c(7) # we may need to change the values of the receptor rows according to each specific dataset
-
-print(rownames(raw_brca_clin_ref2)[receptor_rows])
+head(raw_brca_clin, n = 15)
 ```
 
-Index of triple negative (TN) samples 
+Check and create a TNBC status column
 ```{r}
-index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "Positive")
+tnbc_col <- c()
 
-print(index_TN)
-sprintf("length: %d", length(index_TN))
-```
-
-Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
-```{r}
-#TODO: WHat is the barcode in this case?
-
-brca_clin <- raw_brca_clin_ref2[,index_TN]
-tn_samples <- toupper(as.character(names(brca_clin))) # patient barcode row
-
-head(tn_samples, n=5)
-```
-Reading RNAseq data
-```{r}
-f <- "./DB/Ref 3/Ref3_untar/brca_cptac_2020/data_log2_cna.txt" 
-brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
-brca_rnaseq <- t(brca_rnaseq)
-raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
-
-#head(brca_rnaseq, n=3)
-```
-
-Extracting gene symbols
-```{r}
-gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
-unlist(strsplit(x = x, split = "\\|"))[1]))
-
-head(gene_symbols, n=5)
-```
-
-Drop rows with a gene symbol equal to “?”
-```{r}
-brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
-gene_symbols <- gene_symbols[which(gene_symbols != "?")]
-```
-
-# TODO: What to delete here?---- 
-Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
-cancer.gov/Encyclopedia/pages/TCGA_Barcode/
-```{r}
-sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
-brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
-sample_type <- sample_type[-which(sample_type == "11")]
+for (i in 1:nrow(raw_brca_clin)){
+  if (isTRUE(raw_brca_clin[i,"TNBC_UPDATED_CLINICAL_STATUS"]=="Positive")){
+    tnbc_col <- c(tnbc_col, TRUE)
+    print(c(TRUE, i))
+  }else{
+    tnbc_col <- c(tnbc_col, FALSE)
+    print(c(FALSE, i))
+  }
+}
 ```
 
 ```{r}
-head(tn_samples, n=5)
+raw_brca_clin$TNBC_status <- tnbc_col
+raw_brca_clin
 ```
 
 
-Match between TN samples (clinical) and RNAseq data
+#### Sample clustering and Principal Components Analysis
+Unsupervised analysis is a good way to get an understanding of the sources of variation in the data. It can also identify potential outlier samples.
+
+The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fashion between all samples. This can be then visualised on a heatmap. Among the many options for creating heatmaps in R, the pheatmap library is one of the more popular ones. The only argument it requires is a matrix of numerical values (such as the correlation matrix).
+
+Reading expression data
 ```{r}
-tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
-substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
-tn_match_na <- which(is.na(tn_match))
-brca_clin <- brca_clin[,-tn_match_na]
-tn_samples <- tn_samples[-tn_match_na]
-tn_match <- tn_match[-tn_match_na]
-brca_rnaseq <- brca_rnaseq[,tn_match]
+exprs_data <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_mrna_seq_fpkm.txt", sep = "\t", header = T)
 
-brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
+# Re-structuring the header
+#row.names(exprs_data) <- exprs_data$Hugo_Symbol
+exprs_data = exprs_data[rowSums(is.na(exprs_data)) == 0,]
+#raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+#raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
 
+hugo_symbols <- exprs_data$Hugo_Symbol
+exprs_data = subset(exprs_data, select = -c(Hugo_Symbol))
+
+head(exprs_data, n = 15)
 ```
 
-# Normalization of the dataset
+#### Check the normalisation and scales used
+For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
+
+-  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
+-  The *summary* function can then be used to print the distributions.
+
 ```{r}
-brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
-
-head(brca_rnaseq_n)
+## exprs get the expression levels as a data frame and get the distribution
+summary(exprs_data[,0:10])
 ```
 
+From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
+```{r}
+# Modifying expression data to be normalized with log2
+#exprs_data <- log2(exprs_data+1)
+
+# 
+boxplot(exprs_data[,0:10],outline=FALSE)
+```
+
+
+```{r}
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
+
+corMatrix <- cor(exprs_data, use="c")
+pheatmap(corMatrix[0:10,0:10])   
+```
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+# first, we replace the - for .
+#row.names(raw_brca_clin) <- gsub('-', '.', row.names(raw_brca_clin))
+# keep only the samples that we have data for
+raw_brca_clin <- subset(raw_brca_clin, rownames(raw_brca_clin) %in% colnames(corMatrix))
+row.names(raw_brca_clin)
+```
+
+```{r}
+colnames(corMatrix)
+```
+
+```{r}
+ncol(corMatrix)
+```
+
+```{r}
+## If not, force the rownames to match the columns
+raw_brca_clin$TNBC_status <- as.factor(raw_brca_clin$TNBC_status)
+raw_brca_clin$AGE <- as.factor(raw_brca_clin$AGE)
+raw_brca_clin$ETHNICITY <- as.factor(raw_brca_clin$ETHNICITY)
+
+# We check the first 10 samples
+rownames(raw_brca_clin) <- colnames(corMatrix)
+pheatmap(corMatrix[10:20,10:20], annotation_col=raw_brca_clin[c("TNBC_status", "AGE", "ETHNICITY")])  
+```
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+library(ggplot2)
+library(dplyr)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(t(exprs_data))
+
+cbind(raw_brca_clin, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+full_output <- cbind(raw_brca_clin, t(exprs_data))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/Ref3_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+#features <- select(features, ID, GENE_SYMBOL)
+exprs_data$GENE_SYMBOL <- hugo_symbols
+full_output <- exprs_data
+#full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/Ref3_clean_with_IDs_only.csv")
+```
+
+```{r}
+length(hugo_symbols)
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+raw_brca_clin$TNBC_status)
+design
+```
+
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("NoTNBC","TNBC")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+exprs_data = apply(exprs_data, 2, function(x) as.numeric(as.character(x)))
+```
+
+
+```{r}
+#summary(exprs_data[colnames(exprs_data)!="Hugo_Symbol",])
+
+## calculate median expression level
+#cutoff <- median(exprs_data)
+cutoff <- 3.3
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs_data > cutoff
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+#gse <- gse[keep,]
+```
+
+```{r}
+exprs_data[,colnames(exprs_data)!="Hugo_Symbol"]
+```
+
+
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(exprs_data, design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(exprs_data,design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(exprs_data, design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- raw_brca_clin
+anno
+```
+
+```{r}
+fit2
+```
+
+
+```{r}
+hugo_symbols_list <- c()
+
+for (i in as.numeric(rownames(fit2))){
+  hugo_symbols_list <- c(hugo_symbols_list, hugo_symbols[i])
+}
+```
+
+```{r}
+nrow(fit2)
+```
+
+
+```{r}
+#anno <- select(anno, SAMPLE_ID)
+fit2$genes <- hugo_symbols_list
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+full_results$P.Value
+## Get the results for particular gene of interest
+filter(full_results, ID == "BMP8A")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/Ref3_differentially_expressed_genes.csv")
+```
 
 
 ### Ref 4. 
 ```{r}
 # We untar the file
-untar(tarfile = "./DB/Ref 4/brca_mbcproject_wagle_2017.tar.gz", exdir = "./DB/Ref 4/Ref4_untar/", list = TRUE)
-untar(tarfile = "./DB/Ref 4/brca_mbcproject_wagle_2017.tar.gz", exdir = "./DB/Ref 4/Ref4_untar/")
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/", list = TRUE)
+#untar(tarfile = "./DB/Ref 2/brca_metabric.tar.gz", exdir = "./DB/Ref 2/Ref2_untar/")
 ```
-
 Clinical data
 ```{r}
 # We avoid strings being recognized as factors
@@ -278,57 +2467,435 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin_ref2 <- read.delim(file = "./DB/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
-names(raw_brca_clin_ref2) <- as.matrix(raw_brca_clin_ref2[4, ])
-raw_brca_clin_ref2 <- raw_brca_clin_ref2[5:nrow(raw_brca_clin_ref2),]
-raw_brca_clin_ref2[] <- lapply(raw_brca_clin_ref2, function(x) type.convert(as.character(x)))
-raw_brca_clin_ref2 <- t(raw_brca_clin_ref2)
+names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
+raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
 
-head(raw_brca_clin_ref2, n = 15)
+head(raw_brca_clin, n = 15)
+=======
 ```
+Opening the CEL Files
+### Ref 1. GSE87049
+```{r}
+# We untar the file
+untar(tarfile = "./TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "../TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar")
+>>>>>>> d56643c (Modified CEL files analyzing)
+```
+
+Check and create a TNBC status column
+```{r}
+<<<<<<< HEAD
+tnbc_col <- c()
+
+for (i in 1:nrow(raw_brca_clin)){
+  if (isTRUE(raw_brca_clin[i,"BX_ER"]=="NEGATIVE" & raw_brca_clin[i,"BX_PR"]=="NEGATIVE" & raw_brca_clin[i,"BX_HER2OVERALL"]=="NEGATIVE")){
+    tnbc_col <- c(tnbc_col, TRUE)
+    print(c(TRUE, i))
+  }else{
+    tnbc_col <- c(tnbc_col, FALSE)
+    print(c(FALSE, i))
+  }
+}
+```
+
+```{r}
+raw_brca_clin$TNBC_status <- tnbc_col
+raw_brca_clin
+```
+
+
+#### Sample clustering and Principal Components Analysis
+Unsupervised analysis is a good way to get an understanding of the sources of variation in the data. It can also identify potential outlier samples.
+
+The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fashion between all samples. This can be then visualised on a heatmap. Among the many options for creating heatmaps in R, the pheatmap library is one of the more popular ones. The only argument it requires is a matrix of numerical values (such as the correlation matrix).
+
+Reading expression data
+```{r}
+exprs_data <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_mrna_seq_v2_rsem.txt", sep = "\t", header = T)
+
+# Re-structuring the header
+#row.names(exprs_data) <- exprs_data$Hugo_Symbol
+exprs_data = exprs_data[rowSums(is.na(exprs_data)) == 0,]
+exprs_data = exprs_data[,colSums(is.na(exprs_data)) == 0]
+#raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
+#raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
+
+hugo_symbols <- exprs_data$Hugo_Symbol
+exprs_data = subset(exprs_data, select = -c(Hugo_Symbol, Entrez_Gene_Id))
+
+head(exprs_data, n = 15)
+```
+
+#### Check the normalisation and scales used
+For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
+
+-  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
+-  The *summary* function can then be used to print the distributions.
+=======
+# specify the path on your computer where the folder that contains the CEL-files is located
+celpath = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar"
+```
+
+```{r}
+# import CEL files containing raw probe-level data into an R AffyBatch object
+list = list.files(celpath, full.names=TRUE, pattern = ".CEL.gz")
+data = read.celfiles(list[0:30])
+```
+```{r}
+list
+```
+
+>>>>>>> d56643c (Modified CEL files analyzing)
+
+```{r}
+## exprs get the expression levels as a data frame and get the distribution
+summary(exprs_data[,0:10])
+```
+
+From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
+```{r}
+# Modifying expression data to be normalized with log2
+exprs_data <- log2(exprs_data+2)
+
+# 
+boxplot(exprs_data[,0:10],outline=FALSE)
+```
+
+
+```{r}
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
+
+corMatrix <- cor(exprs_data, use="c")
+pheatmap(corMatrix[0:10,0:10])   
+```
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+# first, we replace the - for .
+row.names(raw_brca_clin) <- gsub('-', '.', row.names(raw_brca_clin))
+# keep only the samples that we have data for
+raw_brca_clin <- subset(raw_brca_clin, rownames(raw_brca_clin) %in% colnames(corMatrix))
+row.names(raw_brca_clin)
+```
+
+```{r}
+colnames(corMatrix)
+```
+
+```{r}
+ncol(corMatrix)
+```
+
+```{r}
+## If not, force the rownames to match the columns
+raw_brca_clin$PATIENT_ID <- as.factor(raw_brca_clin$PATIENT_ID)
+raw_brca_clin$BX_LOCATION <- as.factor(raw_brca_clin$BX_LOCATION)
+raw_brca_clin$BX_GRADE <- as.factor(raw_brca_clin$BX_GRADE)
+raw_brca_clin$TNBC_status <- as.factor(raw_brca_clin$TNBC_status)
+raw_brca_clin$BX_HISTOLOGY <- as.factor(raw_brca_clin$BX_HISTOLOGY)
+
+# We check the first 10 samples
+rownames(raw_brca_clin) <- colnames(corMatrix)
+pheatmap(corMatrix[10:20,10:20], annotation_col=raw_brca_clin[c("TNBC_status", "BX_GRADE", "BX_HISTOLOGY")])  
+```
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+library(ggplot2)
+library(dplyr)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(t(exprs_data))
+
+cbind(raw_brca_clin, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + geom_point() + geom_text_repel()
+```
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+full_output <- cbind(raw_brca_clin, t(exprs_data))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+full_output <- cbind(hugo_symbols, exprs_data)
+#exprs_data$GENE_SYMBOL <- hugo_symbols
+#full_output <- exprs_data
+#full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_clean_with_IDs_only.csv")
+```
+
+```{r}
+full_output
+length(hugo_symbols)
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+raw_brca_clin$TNBC_status)
+design
+```
+
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("NoTNBC","TNBC")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+exprs_data = apply(exprs_data, 2, function(x) as.numeric(as.character(x)))
+```
+
+
+```{r}
+#summary(exprs_data[colnames(exprs_data)!="Hugo_Symbol",])
+
+## calculate median expression level
+#cutoff <- median(exprs_data)
+cutoff <- 1.5
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs_data > cutoff
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+#gse <- gse[keep,]
+```
+
+```{r}
+exprs_data[,colnames(exprs_data)!="Hugo_Symbol"]
+```
+
+
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(exprs_data, design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(exprs_data,design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(exprs_data, design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- raw_brca_clin
+anno
+```
+
+```{r}
+fit2
+```
+
+
+```{r}
+hugo_symbols_list <- c()
+
+for (i in as.numeric(rownames(fit2))){
+  hugo_symbols_list <- c(hugo_symbols_list, hugo_symbols[i])
+}
+```
+
+```{r}
+nrow(fit2)
+```
+
+
+```{r}
+#anno <- select(anno, SAMPLE_ID)
+fit2$genes <- hugo_symbols_list
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+full_results$P.Value
+## Get the results for particular gene of interest
+filter(full_results, ID == "BMP8A")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_differentially_expressed_genes.csv")
+```
+
+
+
+## Reference dataset (TCGA)
+
+We avoid strings being recognized as factors
+```{r}
+options(stringsAsFactors = F)
+```
+
+Reading clinical data
+```{r}
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/TCGA/BRCA.clin.merged.txt", sep = "\t", header = F,
+row.names = 1, as.is = T)
+```
+
 Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
 ```{r}
-receptor_rows <- c(14,16,19) # we may need to change the values of the receptor rows according to each specific dataset
+receptor_rows <- c(24,29,1160) # we may need to change the values of the receptor rows according to each specific dataset
 
-print(rownames(raw_brca_clin_ref2)[receptor_rows])
+print(rownames(raw_brca_clin)[receptor_rows])
 ```
-
 Index of triple negative (TN) samples 
 ```{r}
-index_TN <- which(as.character(raw_brca_clin_ref2[receptor_rows[1],]) == "NEGATIVE" &
-as.character(raw_brca_clin_ref2[receptor_rows[2],]) == "NEGATIVE" &
-as.character(raw_brca_clin_ref2[receptor_rows[3],]) == "NEGATIVE")
-
-print(index_TN)
-sprintf("length: %d", length(index_TN))
+index_TN <- which(as.character(raw_brca_clin[receptor_rows[1],]) == "negative" &
+as.character(raw_brca_clin[receptor_rows[2],]) == "negative" &
+as.character(raw_brca_clin[receptor_rows[3],]) == "negative")
 ```
 
 Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
 ```{r}
-brca_clin <- raw_brca_clin_ref2[,index_TN]
-tn_samples <- toupper(as.character(brca_clin[1,])) # patient barcode row
-
-head(tn_samples, n=5)
+brca_clin <- raw_brca_clin[,index_TN]
+tn_samples <- toupper(as.character(brca_clin[21,])) # patient barcode row
 ```
+
 Reading RNAseq data
 ```{r}
-f <- "./DB/Ref 2/Ref2_untar/brca_metabric/data_cna.txt" 
-brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T)
-brca_rnaseq <- t(brca_rnaseq)
+f <- "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/TCGA/BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
+brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T, row.names = 1)
 raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
-
-head(brca_rnaseq)
 ```
 
 Extracting gene symbols
 ```{r}
-raw_brca_rnaseq <- raw_brca_rnaseq[3:nrow(raw_brca_rnaseq),]
 gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
 unlist(strsplit(x = x, split = "\\|"))[1]))
-
-head(gene_symbols, n=5)
 ```
 
 Drop rows with a gene symbol equal to “?”
@@ -337,7 +2904,6 @@ brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
 gene_symbols <- gene_symbols[which(gene_symbols != "?")]
 ```
 
-# TODO: What to delete here?---- 
 Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
 cancer.gov/Encyclopedia/pages/TCGA_Barcode/
 ```{r}
@@ -345,11 +2911,6 @@ sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
 brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
 sample_type <- sample_type[-which(sample_type == "11")]
 ```
-
-```{r}
-head(tn_samples, n=5)
-```
-
 
 Match between TN samples (clinical) and RNAseq data
 ```{r}
@@ -365,15 +2926,303 @@ brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq
 
 ```
 
-# Normalization of the dataset
+#### Normalization of the dataset
 ```{r}
 brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
+```
 
-head(brca_rnaseq_n)
+#### Boxplot
+```{r}
+boxplot(t(brca_rnaseq_n)[,0:10],outline=FALSE)
+```
+
+```{r}
+library(pheatmap)
+## argument use="c" stops an error if there are any missing data points
+
+corMatrix <- cor(t(brca_rnaseq_n), use="c")
+pheatmap(corMatrix[0:10,0:10])   
+```
+
+We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
+```{r}
+## Print the rownames of the sample information and check it matches the correlation matrix
+# first, we replace the - for .
+#row.names(raw_brca_clin) <- gsub('-', '.', row.names(raw_brca_clin))
+# keep only the samples that we have data for
+#raw_brca_clin <- subset(raw_brca_clin, rownames(raw_brca_clin) %in% colnames(corMatrix))
+brca_clin <- as.data.frame(t(brca_clin))
+
+row.names(brca_clin)
+```
+
+```{r}
+colnames(corMatrix)
+```
+
+```{r}
+ncol(corMatrix)
+```
+
+```{r}
+## If not, force the rownames to match the columns
+brca_clin$patient.age_at_initial_pathologic_diagnosis <- as.factor(brca_clin$patient.age_at_initial_pathologic_diagnosis)
+brca_clin$patient.ethnicity <- as.factor(brca_clin$patient.ethnicity)
+#raw_brca_clin$BX_LOCATION <- as.factor(raw_brca_clin$BX_LOCATION)
+#raw_brca_clin$BX_GRADE <- as.factor(raw_brca_clin$BX_GRADE)
+#raw_brca_clin$TNBC_status <- as.factor(raw_brca_clin$TNBC_status)
+#raw_brca_clin$BX_HISTOLOGY <- as.factor(raw_brca_clin$BX_HISTOLOGY)
+
+# We check the first 10 samples
+row.names(brca_clin) <- colnames(corMatrix)
+pheatmap(corMatrix[0:10,0:10], annotation_col=brca_clin[c("patient.age_at_initial_pathologic_diagnosis", "patient.ethnicity")])  
+```
+
+#### PCA
+It is important to transpose the expression matrix, otherwise R will try and compute PCA on the genes (instead of samples) and quickly run out of memory.
+
+As PCA is an unsupervised method, the known sample groups are not taken into account. However, we can add labels when we plot the results. The ggplot2 package is particularly convenient for this. The ggrepel package can be used to postion the text labels more cleverly so they can be read.
+
+```{r}
+library(ggrepel)
+library(ggplot2)
+library(dplyr)
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+pca <- prcomp(brca_rnaseq_n)
+
+cbind(brca_clin, pca$x) %>% 
+ggplot(aes(x = PC1, y=PC2, col= patient.ethnicity,label=paste("Ethnicity", patient.ethnicity))) + geom_point() + geom_text_repel()
+```
+#### Exporting the data
+
+We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
+```{r}
+library(readr)
+full_output <- cbind(raw_brca_clin, t(exprs_data))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_clean.csv")
+```
+
+The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
+
+```{r}
+### Look at the features data frame and decide the names of the columns you want to keep
+full_output <- cbind(hugo_symbols, exprs_data)
+#exprs_data$GENE_SYMBOL <- hugo_symbols
+#full_output <- exprs_data
+#full_output <- as.data.frame(exprs(gse))
+write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_clean_with_IDs_only.csv")
+```
+
+```{r}
+full_output
+length(hugo_symbols)
+```
+
+#### Differential Expression
+By far the most-popular package for performing differential expression is limma. The user-guide is extensive and covers the theory behind the analysis and many use-cases (Chapters 9 and 17 for single-channel data such as Illumina and Affymetrix). 
+
+Crucially, we have to allocate the samples in our dataset to the sample groups of interest. A useful function is model.matrix, which will create a design matrix from one of the columns in your sampleInfo. Here I choose sampleInfo$group.
+
+The design matrix is a matrix of 0 and 1s; one row for each sample and one column for each sample group. A 1 in a particular row and column indicates that a given sample (the row) belongs to a given group (column).
+```{r}
+library(limma)
+design <- model.matrix(~0+brca_clin$patient.ethnicity)
+design
+```
+
+```{r}
+## the column names are a bit ugly, so we will rename
+colnames(design) <- c("Hispanic","NonHispanic")
+```
+
+It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
+```{r}
+exprs_data = apply(t(brca_rnaseq_n), 2, function(x) as.numeric(as.character(x)))
 ```
 
 
+```{r}
+#summary(exprs_data[colnames(exprs_data)!="Hugo_Symbol",])
+
+## calculate median expression level
+#cutoff <- median(exprs_data)
+cutoff <- 1.5
+
+## TRUE or FALSE for whether each gene is "expressed" in each sample
+is_expressed <- exprs_data > cutoff
+
+## Identify genes expressed in more than 2 samples
+keep <- rowSums(is_expressed) > 2
+
+## check how many genes are removed / retained.
+table(keep)
+
+## subset to just those expressed genes
+#gse <- gse[keep,]
+```
 
 ```{r}
-head(data_raw)
+exprs_data[,colnames(exprs_data)!="Hugo_Symbol"]
+```
+
+
+The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
+```{r}
+fit <- lmFit(t(exprs_data), design)
+head(fit$coefficients)
+```
+
+In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
+```{r}
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+
+## can define multiple contrasts
+## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
+
+fit2 <- contrasts.fit(fit, contrasts)
+```
+
+Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
+```{r}
+fit2 <- eBayes(fit2)
+```
+
+We usually get our first look at the results by using the topTable command.
+```{r}
+topTable(fit2)
+```
+
+The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts.
+```{r}
+topTable(fit2, coef=1)
+
+### to see the results of the second contrast (if it exists)
+## topTable(fit2, coef=2)
+```
+
+If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
+```{r}
+decideTests(fit2)
+```
+
+```{r}
+table(decideTests(fit2))
+```
+
+#### Coping with outliers
+It is tempting to discard any arrays which seem to be outliers prior to differential expressions. However, this is done at the expense of sample-size which could be an issue for small experiments. A compromise, which has been shown to work well is to calculate weights to define the reliability of each sample.
+The arrayWeights function will assign a score to each sample; with a value of 1 implying equal weight. Samples with score less than 1 are down-weights, and samples with scores greater than 1 are up-weighted. Therefore no samples actually need to be removed.
+
+```{r}
+## calculate relative array weights
+aw <- arrayWeights(exprs_data,design)
+aw
+```
+The lmFit function can accept weights, and the rest of the code proceeds as above.
+```{r}
+fit <- lmFit(exprs_data, design, weights = aw)
+contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
+fit2 <- contrasts.fit(fit, contrasts)
+fit2 <- eBayes(fit2)
+```
+
+```{r}
+topTable(fit2)
+```
+
+#### Further processing and visualisation of DE results
+At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
+
+For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
+
+Once an annotation data frame has been created, it can be assigned to our results.
+
+```{r}
+anno <- raw_brca_clin
+anno
+```
+
+```{r}
+fit2
+```
+
+
+```{r}
+hugo_symbols_list <- c()
+
+for (i in as.numeric(rownames(fit2))){
+  hugo_symbols_list <- c(hugo_symbols_list, hugo_symbols[i])
+}
+```
+
+```{r}
+nrow(fit2)
+```
+
+
+```{r}
+#anno <- select(anno, SAMPLE_ID)
+fit2$genes <- hugo_symbols_list
+topTable(fit2)
+```
+
+The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
+
+First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
+```{r}
+full_results <- topTable(fit2, number=Inf)
+full_results
+```
+
+```{r}
+## Make sure you have ggplot2 loaded
+library(ggplot2)
+ggplot(full_results,aes(x = logFC, y=B)) + geom_point()
+```
+
+The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+```{r}
+library(dplyr)
+## change according to your needs
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+full_results %>% 
+  dplyr::mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant)) + geom_point()
+```
+
+Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+```{r}
+library(ggrepel)
+p_cutoff <- 0.05
+fc_cutoff <- 1
+topN <- 20
+
+full_results %>% 
+  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff ) %>% 
+  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID,"")) %>% 
+  ggplot(aes(x = logFC, y = B, col=Significant,label=Label)) + geom_point() + geom_text_repel(col="black")
+```
+
+#### Filtering and exporting the results table
+The filter function from dplyr gives a convenient way to interrogate the table of results.
+```{r}
+full_results$P.Value
+## Get the results for particular gene of interest
+filter(full_results, ID == "BMP8A")
+```
+We can also filter according to p-value (adjusted) and fold-change cut-offs
+```{r}
+p_cutoff <- 0.05
+fc_cutoff <- 1
+
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff)
+```
+
+These results can be exported with the write_csv function.
+```{r}
+library(readr)
+filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff) %>%
+  write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_differentially_expressed_genes.csv")
 ```
