@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # Data Analysis of BRCA TNBC TCGA
 
 
-## Data Pre-processing--------------------------------------------------------------------------------------------------------------
+## Data Pre-processing--------------------------------------------------------------------------------------------------
 
 We avoid strings being recognized as factors
 ```{r}
@@ -92,14 +92,32 @@ brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq
 ```{r}
 brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
 ```
+## Use ComBat results instead
+```{r}
 
-## Dimensions reduction--------------------------------------------------------------------------------------------------------------
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
+train <- read.csv("ComBat/ComBat_train.csv", row.names = "row.names")
+test <- read.csv("ComBat/ComBat_test.csv", row.names = "row.names")
+```
+
+```{r}
+#MAD to filter genes and PCA
+cy_mat_combat_mad_train <- apply(train, 1, mad)
+train <- train[which(cy_mat_combat_mad_train > 1),]
+
+cy_mat_combat_mad_test <- apply(test, 1, mad)
+test <- test[which(cy_mat_combat_mad_test > 1),]
+```
+
+
+## Dimensions reduction--------------------------------------------------------------------------------------------------
 
 PCA
 ```{r}
 # Principal components analysis
 
-x <- prcomp(brca_rnaseq_n, scale = FALSE)
+x_train <- prcomp(train, scale = FALSE)
+x_test <- prcomp(test, scale = FALSE)
 ```
 
 Visualize eigenvalues (scree plot)
@@ -107,39 +125,55 @@ Visualize eigenvalues (scree plot)
 library(factoextra)
 
 #Show the percentage of variances explained by each principal component.
-fviz_eig(x)
+fviz_eig(x_train)
+fviz_eig(x_test)
 ```
 
 Re-labeling the patients IDs
 ```{r}
 # We check that the patient ID doesn't repeat
-temp <- table(x[["x"]])
+temp_train <- table(x_train[["x"]])
+temp_test <- table(x_test[["x"]])
 
-isTRUE(any(temp > 1)) # if the result is FALSE, they appear only once
+isTRUE(any(temp_train > 1)) # if the result is FALSE, they appear only once
+isTRUE(any(temp_test > 1)) # if the result is FALSE, they appear only once
 ```
 We save the original IDs in another list inside of x
 ```{r}
-orig_IDs <- matrix(row.names(x[["x"]]), ncol = 1) # we store the original IDs
-short_IDs <- as.character(matrix(data = 1:nrow(x[["x"]]), ncol = 1)) # we store the short IDs
+orig_IDs_train <- matrix(row.names(x_train[["x"]]), ncol = 1) # we store the original IDs
+short_IDs_train <- as.character(matrix(data = 1:nrow(x_train[["x"]]), ncol = 1)) # we store the short IDs
+IDs_train <- cbind(orig_IDs_train, short_IDs_train) # we bind them in the same matrix
+x_train[["IDs"]] <- IDs_train # We append the new IDs matrix to the x list
 
-IDs <- cbind(orig_IDs, short_IDs) # we bind them in the same matrix
-
-
-x[["IDs"]] <- IDs # We append the new IDs matrix to the x list
+orig_IDs_test <- matrix(row.names(x_test[["x"]]), ncol = 1) # we store the original IDs
+short_IDs_test <- as.character(matrix(data = 1:nrow(x_test[["x"]]), ncol = 1)) # we store the short IDs
+IDs_test <- cbind(orig_IDs_test, short_IDs_test) # we bind them in the same matrix
+x_test[["IDs"]] <- IDs_test # We append the new IDs matrix to the x list
 ```
 
 We proceed to assign a unique number to each patient
 ```{r}
-row.names(x[["x"]]) <- short_IDs
+row.names(x_train[["x"]]) <- short_IDs_train
+row.names(x_test[["x"]]) <- short_IDs_test
 
-head(x[["x"]])
+head(x_test[["x"]])
 ```
 
 Graph of individuals
 
-We plot to visualize the short IDs of each patient
+We plot to visualize the short IDs of each patient 
 ```{r}
-fviz_pca_ind(x,
+# train
+fviz_pca_ind(x_train,
+             col.ind = "cos2", # Color by the quality of representation
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = T,     # Avoid text overlapping,
+             max.overlaps = Inf
+             )
+```
+```{r}
+# test
+fviz_pca_ind(x_test,
              col.ind = "cos2", # Color by the quality of representation
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
              repel = T,     # Avoid text overlapping,
@@ -153,9 +187,9 @@ fviz_pca_ind(x,
 
 ```{r}
 # Coordinates of individuals
-ind.coord <- as.data.frame(get_pca_ind(x)$coord)
-
-head(ind.coord)
+ind.coord_train <- as.data.frame(get_pca_ind(x_train)$coord)
+ind.coord_test <- as.data.frame(get_pca_ind(x_test)$coord)
+#head(ind.coord)
 ```
 Loading the library
 ```{r}
@@ -167,21 +201,30 @@ library(M3C)
 
 PCA
 ```{r}
-data_pca <- pca(brca_rnaseq_n,legendtextsize = 10,axistextsize = 10,dotsize=2)
+data_pca_train <- pca(train,legendtextsize = 10,axistextsize = 10,dotsize=2)
+data_pca_test <- pca(test,legendtextsize = 10,axistextsize = 10,dotsize=2)
 ```
 Performing the consensus clustering on the normalized data
 ```{r}
 # for vignette
-res <- M3C(t(brca_rnaseq_n), removeplots = TRUE, iters=25, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
+res_train <- M3C(t(train), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
+res_test <- M3C(t(test), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
 
-optimal_k_pac = max(res[["assignments"]]);
+optimal_k_pac_train = max(res_train[["assignments"]]);
+optimal_k_pac_test = max(res_test[["assignments"]]);
 ```
 # Checking the scores
 
 The scores and p values are contained within the res$scores object. We can see below the RCSI reaches a maxima at K = 2, the p value supports this optimal K decision. This means the null hypothesis that K = 1 can be rejected for this dataset because we have achieved significance (alpha=0.05) versus a dataset with no clusters.
 
 ```{r}
-res$scores
+# train
+res_train$scores
+```
+
+```{r}
+# test
+res_test$scores
 ```
 
 # Checking the plots
@@ -191,7 +234,11 @@ res$scores
 In the CDF and following PAC plot we can see the inherant bias of consensus clustering where as K increases so does the apparent stability of the results (or CDF plot flatness), this we correct for by using a reference. This makes the method more sensitive to detection of the underlying structure in noisy data.
 
 ```{r}
-res$plots[[1]]
+res_train$plots[[1]]
+```
+
+```{r}
+res_test$plots[[1]]
 ```
 
 2. PAC Score
@@ -200,43 +247,68 @@ This figure above shows the PAC score, we can see an elbow at K = 5 which is sug
 
 
 ```{r}
-res$plots[[2]]
+res_train$plots[[2]]
 ```
 
+```{r}
+res_test$plots[[2]]
+```
 3. Relative Cluster Stability Index (RCSI)
 
 We derive the Relative Cluster Stability Index (RCSI) and associated 95% confidence intervals which take into account the reference PAC scores using the reference mean. This metric is better than the PAC score for deciding class number, where the maximum value corresponds to the optimal K. In this example the RCSI has an optima at K=2. Either the RCSI or p values can be used to select K, in the Bioinformatics paper we used M3C with the p values to select K 
 
 ```{r}
-res$plots[[4]]
+res_train$plots[[4]]
+```
+
+```{r}
+res_test$plots[[4]]
 ```
 
 4. P values
 
 Finally, we calculate a p value from the distribution, here we display the p values from the beta distribution. If none of the p values reach significance over a reasonable range of K (e.g. 10), then we accept the null hypothesis. In the GBM dataset, we can see K = 2 reaches signfiicance with an alpha of 0.05, therefore we can reject the null hypothesis K=1 for the GBM dataset.
 ```{r}
-res$plots[[3]]
+res_train$plots[[3]]
 ```
 
+```{r}
+res_test$plots[[3]]
+```
 # Entropy objective function
 
 We use information entropy and aim to minimise it to find K, where lower values correspond to less uncertainty in the system (more stability during resampling). Whilst this function often gives pretty similar results to the PAC score, it makes better theoretical sense because it does not rely on a subjective window, neither does it rely on calculating a CDF first and a metric from this CDF second.
 
 ```{r}
-res_entropy <- M3C(t(brca_rnaseq_n), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
+res_entropy_train <- M3C(t(train), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
+optimal_k_entropy_train = max(res_entropy_train$assignments)
 
-optimal_k_entropy = max(res_entropy$assignments)
+res_entropy_test <- M3C(t(test), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
+optimal_k_entropy_test = max(res_entropy_test$assignments)
 ```
 
 ```{r}
-res_entropy$plots[[2]]
+res_entropy_train$plots[[2]]
 ```
+
+```{r}
+res_entropy_test$plots[[2]]
+```
+
 Comparing both consensus clustering methods optimal K
 ```{r}
-if (optimal_k_pac == optimal_k_entropy){
-  k_clusters = optimal_k_pac
+if (optimal_k_pac_train == optimal_k_entropy_train){
+  k_clusters_train = 2
   
-  print(paste0("The optimal k clusters value is: ", as.character(k_clusters)))
+  print(paste0("The optimal k clusters value is: ", as.character(k_clusters_train)))
+}
+```
+
+```{r}
+if (optimal_k_pac_test == optimal_k_entropy_test){
+  k_clusters_test = 2
+  
+  print(paste0("The optimal k clusters value is: ", as.character(k_clusters_test)))
 }
 ```
 Now we are pretty convinced there are 2 clusters within this dataset which are not likely simply to have
@@ -250,11 +322,14 @@ The 3 lines below extract the ordered (according in clustering results) expressi
 ```{r}
 # k_clusters = 5 # uncomment to test other k values
 
-data <- res$realdataresults[[k_clusters]]$ordered_data
-annon <- res$realdataresults[[k_clusters]]$ordered_annotation     # the ordered data (cluster 1 and cluster 2)
-ccmatrix <- res$realdataresults[[k_clusters]]$consensus_matrix
+data_train <- res_train$realdataresults[[k_clusters_train]]$ordered_data
+annon_train <- res_train$realdataresults[[k_clusters_train]]$ordered_annotation    
+ccmatrix_train <- res_train$realdataresults[[k_clusters_train]]$consensus_matrix
 
-head(annon)
+data_test <- res_test$realdataresults[[k_clusters_test]]$ordered_data
+annon_test <- res_test$realdataresults[[k_clusters_test]]$ordered_annotation  
+ccmatrix_test <- res_test$realdataresults[[k_clusters_test]]$consensus_matrix
+#head(annon)
 ```
 
 Consensus matrix heatmaps from M3C output with ComplexHeatmap.
@@ -266,10 +341,10 @@ Consensus matrix heatmaps from M3C output with ComplexHeatmap.
  x <- c("skyblue", "gold", "violet", "darkorchid", "slateblue", "forestgreen",
  "violetred", "orange", "midnightblue", "grey31", "black")
  names(x) <- as.character(seq(1,11,by=1))
- for (i in seq(2,k_clusters)){
+ for (i in seq(2,k_clusters_train)){
  # get cc matrix and labels
- ccmatrix <- res$realdataresults[[i]]$consensus_matrix
- annon <- res$realdataresults[[i]]$ordered_annotation
+ ccmatrix <- res_train$realdataresults[[i]]$consensus_matrix
+ annon <- res_train$realdataresults[[i]]$ordered_annotation
  # do heatmap
  n <- 10
  seq <- rev(seq(0,255,by=255/(n)))
@@ -284,6 +359,86 @@ Consensus matrix heatmaps from M3C output with ComplexHeatmap.
  }
  
  print(ccl)
+```
+
+```{r}
+ library(ComplexHeatmap)
+
+ ccl <- list()
+ x <- c("skyblue", "gold", "violet", "darkorchid", "slateblue", "forestgreen",
+ "violetred", "orange", "midnightblue", "grey31", "black")
+ names(x) <- as.character(seq(1,11,by=1))
+ for (i in seq(2,k_clusters_test)){
+ # get cc matrix and labels
+ ccmatrix <- res_test$realdataresults[[i]]$consensus_matrix
+ annon <- res_test$realdataresults[[i]]$ordered_annotation
+ # do heatmap
+ n <- 10
+ seq <- rev(seq(0,255,by=255/(n)))
+ palRGB <- cbind(seq,seq,255)
+ mypal <- rgb(palRGB,maxColorValue=255)
+ ha = HeatmapAnnotation(
+ df= data.frame(Cluster=as.character(annon[,1])), col = list(Cluster=x))
+ ccl[[i]] <- Heatmap(ccmatrix, name = "Consensus_index", top_annotation = ha,
+ col=mypal, show_row_dend = FALSE,
+ show_column_dend = FALSE, cluster_rows = FALSE, cluster_columns = FALSE,
+ show_column_names = FALSE)
+ }
+ 
+ print(ccl)
+```
+## KMEANS
+
+### train
+```{r}
+k_train <- kmeans(ind.coord_train, 2)
+
+plot(ind.coord_train[,1:2],col=factor(k_train$cluster))
+```
+
+```{r}
+# Add clusters obtained using the K-means algorithm
+ind.coord_train$cluster <- factor(k_train$cluster)
+eigenvalue <- round(get_eigenvalue(x_train), 1)
+variance.percent_train <- eigenvalue$variance.percent
+```
+
+```{r}
+library(ggpubr)
+
+ggscatter(
+  ind.coord_train, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent_train[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent_train[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+```
+
+### test
+```{r}
+k_test <- kmeans(ind.coord_test, 2)
+
+plot(ind.coord_test[,1:2],col=factor(k_test$cluster))
+```
+
+```{r}
+# Add clusters obtained using the K-means algorithm
+ind.coord_test$cluster <- factor(k_test$cluster)
+eigenvalue <- round(get_eigenvalue(x_test), 1)
+variance.percent_test <- eigenvalue$variance.percent
+```
+
+```{r}
+library(ggpubr)
+
+ggscatter(
+  ind.coord_test, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent_test[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent_test[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
 ```
 
 # Visual check of consensus cluster structure
@@ -305,6 +460,50 @@ for (i in seq(1, k_clusters)) {
                                 print(cluster[i]) 
                               }
 ```
+
+## Initial check of DEGs------------------------------------------
+
+```{r}
+library('devtools')
+install_github('rsait/ORdensity')
+library('ORdensity')
+```
+
+```{r}
+x <- train
+y <- test
+EXC.1 <- as.matrix(x)
+EXC.2 <- as.matrix(y)
+```
+
+```{r}
+myORdensity <- new("ORdensity", Exp_cond_1 = EXC.1, Exp_cond_2 = EXC.2)
+```
+
+```{r}
+summary_res <- summary(myORdensity)
+```
+```{r}
+myORdensity@out[["summary"]][["id"]]
+```
+
+```{r}
+result <- findDEgenes(myORdensity)
+```
+```{r}
+result$neighbours
+```
+
+```{r}
+result$clusters[[1]]
+```
+
+```{r}
+result$clusters[[2]]
+```
+
+
+
 # -----------------------------------------------------------MUTATIONS------------------------------------------------------------
 
 We read the .maf file from http://firebrowse.org/?cohort=BRCA&download_dialog=true#
