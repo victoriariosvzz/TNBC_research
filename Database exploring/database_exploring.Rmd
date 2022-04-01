@@ -21,7 +21,6 @@ library(limma)
 library(Biobase)
 library(Biostrings)
 library(genefilter)
-<<<<<<< HEAD
 library(affyio)
 ```
 
@@ -94,10 +93,17 @@ summary(ff)
 
 We proceed to read the cel files and store them into an AffyBatch object
 ```{r}
-library(oligo)
 data_SNP = read.celfiles(ff$GenomeWideSNP_6[0:50])
 data_HuGene = read.celfiles(ff$`HuGene-1_0-st-v1`)
 ```
+
+```{r}
+# TODO: Correo a Profa. Nayeli para solicitar zoom
+# 1. Map Gene Symbols and generate the database
+# 2. Combat
+# 3. Visualization
+```
+
 
 **Slots of the AffyBatch explained**
 cdfName:
@@ -187,7 +193,6 @@ To plot the intensities of all the probes of a probe set, we will use ggplot().
 probeNrs = rep(rownames(pm(data_HuGene,"7981326")),6)
 ints=c(pm(data_HuGene,"7981326")[,1],pm(data_HuGene,"7981326")[,2],pm(data_HuGene,"7981326")[,3],pm(data_HuGene,"7981326")[,4],pm(data_HuGene,"7981326")[,5],pm(data_HuGene,"7981326")[,6])
 ```
-
 Now we will combine the vector with the probe IDs and the vector with the intensities into a data frame (= matrix in which columns contain data of different types: numbers, text, boolean...). The data frame contains two columns: one is called probeNrs and one is called ints.
 ```{r}
 library(ggplot2)
@@ -328,79 +333,14 @@ pData(gse)
 
 ```{r}
 ## print the gene annotation
-#fData(gse)$GENE_SYMBOL
-fData(gse)[fData(gse)$GENE_SYMBOL=="PPIA",]
+fData(gse)
 ```
-
-```{r}
-match_gene <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\GSE575678\\GSE575678_clean_with_IDs_only.csv")
-```
-
-
-#### Removing duplicate gene symbols
-We will stay with the most expressed genes only
-```{r}
-## Verifying if GENE SYMBOLS have repetitions
-table(match_gene$GENE_SYMBOL)
-```
-```{r}
-length(table(match_gene$GENE_SYMBOL))
-```
-
-```{r}
-# We define the function for removing duplicate gene symbols and keep the most expressed only
-
-remove_duplicate_genes<-function(eset, column_of_symbol ,method = "mean"){
-  eset<-as.data.frame(eset)
-  rownames(eset)<-NULL
-
-  dups <- dim(eset)[1] - length(unique(eset[,column_of_symbol]))
-
-  if(dups==0){
-    eset<-tibble:: column_to_rownames(eset,var = column_of_symbol)
-    return(eset)
-  }else{
-    if(method=="mean"){
-      order_index=apply(eset[,setdiff(colnames(eset),column_of_symbol)],1,function(x) mean(x,na.rm=T))
-      eset<-eset[order(order_index,decreasing=F),]
-      eset<-eset %>%dplyr:: distinct(!!sym(column_of_symbol),.keep_all = TRUE) %>%
-        tibble:: column_to_rownames(.,var = column_of_symbol)
-      return(eset)
-    }else if(method == "sd"){
-      order_index = apply(eset[,setdiff(colnames(eset),column_of_symbol)],1,function(x) sd(x,na.rm=T))
-      eset<-eset[order(order_index,decreasing=F),]
-      eset<-eset %>% distinct(!!sym(column_of_symbol),.keep_all = TRUE) %>%
-        tibble:: column_to_rownames(.,var = column_of_symbol)
-      return(eset)
-    }
-  }
-}
-```
-
-
-
-```{r}
-library(tibble)
-
-eset<-remove_duplicate_genes(eset = match_gene,column_of_symbol = "GENE_SYMBOL",method = "mean")
-summary(duplicated(rownames(eset)))
-```
-
-```{r}
-table(rownames(eset))
-```
-
-
-```{r}
-subset(match_gene, GENE_SYMBOL=="PPIA")
-```
-
 
 ```{r}
 ## print the expression data
 # columns == samples
 # rows == genes
-eset
+exprs(gse)
 ```
 #### Check the normalisation and scales used
 For visualisation and statistical analysis, we will inspect the data to discover what scale the data are presented in. The methods we will use assume the data are on a log2 scale; typically in the range of 0 to 16.
@@ -410,7 +350,7 @@ For visualisation and statistical analysis, we will inspect the data to discover
 
 ```{r}
 ## exprs get the expression levels as a data frame and get the distribution
-summary(eset)
+summary(exprs(gse))
 ```
 
 From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
@@ -418,8 +358,9 @@ From this output we clearly see that the values are normalized, so we won't need
 # Modifying expression data to be normalized with log2
 #exprs(gse) <- log2(exprs(gse)+1)
 
-# 
-boxplot(eset, outline=FALSE)
+ref1_boxplot = data.frame(DB_1 = rowMeans(exprs(gse), na.rm = FALSE, dims = 1))
+
+boxplot(ref1_boxplot,outline=FALSE)
 ```
 
 #### Inspect the clinical variables
@@ -522,8 +463,8 @@ is.infinite(exprs(gse)) %>% table()
 library(pheatmap)
 ## argument use="c" stops an error if there are any missing data points
 
-corMatrix <- cor(eset, use="c")
-pheatmap(corMatrix)   
+corMatrix <- cor(exprs(gse),use="c")
+pheatmap(corMatrix[0:10,0:10])   
 ```
 We can incorporate sample information onto the plot to try and understand the clustering. We have already created such a data frame previously (sampleInfo). However, we need to take care that the rownames of these data match the columns of the correlation matrix.
 ```{r}
@@ -548,7 +489,7 @@ sampleInfo$`response to treatment:ch1` <- as.factor(sampleInfo$`response to trea
 
 # We check the first 10 samples
 rownames(sampleInfo) <- colnames(corMatrix)
-pheatmap(corMatrix, annotation_col=sampleInfo[c("TNBC_status", "histological grade:ch1", "response to treatment:ch1")])  
+pheatmap(corMatrix[0:20,0:20], annotation_col=sampleInfo[c("TNBC_status", "histological grade:ch1", "response to treatment:ch1", "breast affected:ch1")])  
 ```
 
 #### PCA
@@ -560,7 +501,7 @@ As PCA is an unsupervised method, the known sample groups are not taken into acc
 library(ggrepel)
 ## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
 
-pca <- prcomp(t(eset))
+pca <- prcomp(t(tidyr::replace_na(exprs(gse),0)))
 
 ## Join the PCs to the sample information
 cbind(sampleInfo, pca$x) %>% 
@@ -571,11 +512,7 @@ ggplot(aes(x = PC1, y=PC2, col=TNBC_status,label=paste("TNBC", TNBC_status))) + 
 We can export the expression data to a csv for inspection in Excel using the write_csv function from readr. The expression values themselves will probably not be very useful as they will be named according to manufacturer ID rather than gene name (for example). We can create a matrix by joining the expression matrix with the feature annotation.
 ```{r}
 library(readr)
-
-eset<-remove_duplicate_genes(eset = match_gene, column_of_symbol = "GENE_SYMBOL", method = "mean")
-eset_fData <- fData(gse)[fData(gse)$ID %in% eset$ID,]
-
-full_output <- cbind(eset_fData, eset)
+full_output <- cbind(fData(gse),exprs(gse))
 write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE75678_clean.csv")
 ```
 
@@ -583,18 +520,18 @@ The annotation from GEO might contain lots of columns that we are not particular
 ```{r}
 library(tidyverse)
 
-features <- eset_fData
+features <- fData(gse)
 #features <- features[!(is.na(features$NAME) | features$NAME==""), ]
 #row.names(features) <- features$NAME
-View(features)
+#View(features)
 ```
 
 ```{r}
 ### Look at the features data frame and decide the names of the columns you want to keep
 features <- select(features, ID, GENE_SYMBOL)
-full_output <- cbind(features, eset)
+full_output <- cbind(features,exprs(gse))
 #full_output <- as.data.frame(exprs(gse))
-write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE575678_clean_with_IDs_only.csv")
+write_csv(full_output, path="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE575678_clean_with_IDs_only.csv")
 ```
 
 #### Differential Expression
@@ -615,16 +552,13 @@ colnames(design) <- c("NoTNBC","TNBC")
 
 It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
 ```{r}
-eset<-remove_duplicate_genes(eset = match_gene, column_of_symbol = "GENE_SYMBOL", method = "mean")
-eset$ID <- NULL
+summary(exprs(gse))
 
-summary(eset)
 ## calculate median expression level
-#cutoff <- median(eset_noID)
-cutoff <- 7.4
+cutoff <- median(exprs(gse))
 
 ## TRUE or FALSE for whether each gene is "expressed" in each sample
-is_expressed <- eset > cutoff
+is_expressed <- exprs(gse) > cutoff
 
 ## Identify genes expressed in more than 2 samples
 keep <- rowSums(is_expressed) > 2
@@ -633,11 +567,11 @@ keep <- rowSums(is_expressed) > 2
 table(keep)
 
 ## subset to just those expressed genes
-eset_noID <- eset[keep,]
+gse <- gse[keep,]
 ```
 The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
 ```{r}
-fit <- lmFit(eset_noID, design)
+fit <- lmFit(exprs(gse), design)
 head(fit$coefficients)
 ```
 
@@ -684,12 +618,12 @@ The arrayWeights function will assign a score to each sample; with a value of 1 
 
 ```{r}
 ## calculate relative array weights
-aw <- arrayWeights(eset_noID, design)
+aw <- arrayWeights(exprs(gse),design)
 aw
 ```
 The lmFit function can accept weights, and the rest of the code proceeds as above.
 ```{r}
-fit <- lmFit(eset_noID, design, weights = aw)
+fit <- lmFit(exprs(gse), design, weights = aw)
 contrasts <- makeContrasts(TNBC - NoTNBC, levels=design)
 fit2 <- contrasts.fit(fit, contrasts)
 fit2 <- eBayes(fit2)
@@ -1218,8 +1152,10 @@ From this output we clearly see that the values go beyond 16, so we will need to
 # Modifying expression data to be normalized with log2
 exprs(gse) <- log2(exprs(gse)+1)
 
+ref5_boxplot = data.frame(DB_5 = rowMeans(exprs(gse), na.rm = FALSE, dims = 1))
+boxplot(ref5_boxplot,outline=FALSE)
 # 
-boxplot(exprs(gse),outline=FALSE)
+#boxplot(exprs(gse),outline=FALSE)
 ```
 
 #### Inspect the clinical variables
@@ -1253,9 +1189,10 @@ sampleInfo <- select(sampleInfo,
                      characteristics_ch1.18 # treatment
                      )
 
+
 ## Optionally, rename to more convenient column names
 sampleInfo <- rename(sampleInfo,
-                     age=characteristics_ch1.5, # age
+                     age=characteristics_ch1.5,
                      race=characteristics_ch1.6, # race
                      histology=characteristics_ch1.7, # histology
                      er_status=characteristics_ch1.12, # er status
@@ -1274,7 +1211,7 @@ Check and create a TNBC status column
 tnbc_col <- c()
 
 for (i in 1:nrow(sampleInfo)){
-  if (isTRUE(sampleInfo[i,"er_status"]=="er status: N" & sampleInfo[i,"pr_status"]=="pr status: N" & sampleInfo[i,"her2_status"]=="her 2 status: N")){
+  if (isTRUE(sampleInfo[i,"characteristics_ch1.12"]=="er status: N" & sampleInfo[i,"characteristics_ch1.14"]=="pr status: N" & sampleInfo[i,"characteristics_ch1.15"]=="her 2 status: N")){
     tnbc_col <- c(tnbc_col, TRUE)
     print(c(TRUE, i))
   }else{
@@ -1787,8 +1724,11 @@ From this output we clearly see that the values are normalized, so we won't need
 # Modifying expression data to be normalized with log2
 # exprs_data <- log2(exprs_data+1)
 
+ref2_boxplot = data.frame(DB_2 = rowMeans(exprs_data, na.rm = FALSE, dims = 1))
+boxplot(ref2_boxplot,outline=FALSE)
+
 # 
-boxplot(exprs_data[,0:10],outline=FALSE)
+#boxplot(exprs_data[,0:10],outline=FALSE)
 ```
 
 
@@ -2096,7 +2036,7 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_patient.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
 names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
@@ -2163,9 +2103,10 @@ From this output we clearly see that the values are normalized, so we won't need
 ```{r}
 # Modifying expression data to be normalized with log2
 #exprs_data <- log2(exprs_data+1)
-
+ref3_boxplot = data.frame(DB_3 = rowMeans(exprs_data, na.rm = FALSE, dims = 1))
+boxplot(ref3_boxplot,outline=FALSE)
 # 
-boxplot(exprs_data[,0:10],outline=FALSE)
+#boxplot(exprs_data, outline=FALSE)
 ```
 
 
@@ -2467,7 +2408,7 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/data_clinical_patient.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
 names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
@@ -2475,19 +2416,10 @@ raw_brca_clin <- raw_brca_clin[5:nrow(raw_brca_clin),]
 raw_brca_clin[] <- lapply(raw_brca_clin, function(x) type.convert(as.character(x)))
 
 head(raw_brca_clin, n = 15)
-=======
-```
-Opening the CEL Files
-### Ref 1. GSE87049
-```{r}
-# We untar the file
-untar(tarfile = "./TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "../TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar")
->>>>>>> d56643c (Modified CEL files analyzing)
 ```
 
 Check and create a TNBC status column
 ```{r}
-<<<<<<< HEAD
 tnbc_col <- c()
 
 for (i in 1:nrow(raw_brca_clin)){
@@ -2534,21 +2466,6 @@ For visualisation and statistical analysis, we will inspect the data to discover
 
 -  The *exprs* function can retrieve the expression values as a data frame; with one column per-sample and one row per-gene.
 -  The *summary* function can then be used to print the distributions.
-=======
-# specify the path on your computer where the folder that contains the CEL-files is located
-celpath = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar"
-```
-
-```{r}
-# import CEL files containing raw probe-level data into an R AffyBatch object
-list = list.files(celpath, full.names=TRUE, pattern = ".CEL.gz")
-data = read.celfiles(list[0:30])
-```
-```{r}
-list
-```
-
->>>>>>> d56643c (Modified CEL files analyzing)
 
 ```{r}
 ## exprs get the expression levels as a data frame and get the distribution
@@ -2558,10 +2475,12 @@ summary(exprs_data[,0:10])
 From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
 ```{r}
 # Modifying expression data to be normalized with log2
-exprs_data <- log2(exprs_data+2)
+exprs_data <- log2(exprs_data+1)
 
+ref4_boxplot = data.frame(DB_4 = rowMeans(exprs_data, na.rm = FALSE, dims = 1))
+boxplot(ref4_boxplot,outline=FALSE)
 # 
-boxplot(exprs_data[,0:10],outline=FALSE)
+#boxplot(exprs_data[,0:10],outline=FALSE)
 ```
 
 
@@ -2933,7 +2852,10 @@ brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
 
 #### Boxplot
 ```{r}
-boxplot(t(brca_rnaseq_n)[,0:10],outline=FALSE)
+ref6_boxplot = data.frame(DB_6 = rowMeans(t(brca_rnaseq_n), na.rm = FALSE, dims = 1))
+boxplot(ref6_boxplot,outline=FALSE)
+
+#boxplot(t(brca_rnaseq_n)[,0:10],outline=FALSE)
 ```
 
 ```{r}
@@ -3226,3 +3148,33 @@ library(readr)
 filter(full_results, adj.P.Val < p_cutoff, abs(logFC) > fc_cutoff) %>%
   write_csv(file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_differentially_expressed_genes.csv")
 ```
+
+```{r}
+
+library(ggplot2)
+# Basic histogram
+ggplot(brca_clin, aes(x=patient.ethnicity)) + geom_histogram(stat = "count")
+# Change the width of bins
+ggplot(brca_clin, aes(x=patient.ethnicity)) + 
+  geom_histogram(binwidth=1, stat = "count")
+# Change colors
+p<-ggplot(brca_clin, aes(x=patient.ethnicity)) + 
+  geom_histogram(color=viridis(3), fill=viridis(3), stat = "count")
+p
+```
+
+```{r}
+#boxplot(split(ref1_boxplot, ref2_boxplot, ref3_boxplot, ref4_boxplot, ref5_boxplot, ref6_boxplot))
+
+#library(ggplot2)
+#> Warning: package 'ggplot2' was built under R version 3.5.3
+#ggplot(split(ref1_boxplot, ref2_boxplot, ref3_boxplot, ref4_boxplot, ref5_boxplot, ref6_boxplot)) + geom_boxplot()
+
+sq = seq(40759)
+df <- data.frame(ref1_boxplot[sq,], ref2_boxplot[sq,], ref3_boxplot[sq,], ref4_boxplot[sq,], ref5_boxplot[sq,], ref6_boxplot[sq,])
+
+                 #vars = rep(c("DB_1","DB_2","DB_3","DB_4","DB_5","DB_6")))
+boxplot(df, las=2, names= c("DB_1","DB_2","DB_3","DB_4","DB_5","DB_6"))
+
+```
+
