@@ -11,9 +11,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 # Data Analysis of BRCA TNBC TCGA
-
 
 ## Data Pre-processing--------------------------------------------------------------------------------------------------
 
@@ -22,91 +20,32 @@ We avoid strings being recognized as factors
 options(stringsAsFactors = F)
 ```
 
-Reading clinical data
+Import ComBat resulting data frame containing gene expression information (previously normalized and batch effect assessed)
 ```{r}
-raw_brca_clin <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", header = F,
-row.names = 1, as.is = T)
-```
-
-Obtaining the data for the 3 receptors (by visually recognizing the rows in the dataset)
-```{r}
-receptor_rows <- c(24,29,1160) # we may need to change the values of the receptor rows according to each specific dataset
-
-print(rownames(raw_brca_clin)[receptor_rows])
-```
-Index of triple negative (TN) samples 
-```{r}
-index_TN <- which(as.character(raw_brca_clin[receptor_rows[1],]) == "negative" &
-as.character(raw_brca_clin[receptor_rows[2],]) == "negative" &
-as.character(raw_brca_clin[receptor_rows[3],]) == "negative")
-```
-
-Filtering to obtain only Triple Negative data and obtain the key of the samples (patient barcodes)
-```{r}
-brca_clin <- raw_brca_clin[,index_TN]
-tn_samples <- toupper(as.character(brca_clin[21,])) # patient barcode row
-```
-
-Reading RNAseq data
-```{r}
-f <- "BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
-brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T, row.names = 1)
-raw_brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
-```
-
-Extracting gene symbols
-```{r}
-gene_symbols <- as.character(sapply(rownames(raw_brca_rnaseq), function(x)
-unlist(strsplit(x = x, split = "\\|"))[1]))
-```
-
-Drop rows with a gene symbol equal to “?”
-```{r}
-brca_rnaseq <- raw_brca_rnaseq[which(gene_symbols != "?"),]
-gene_symbols <- gene_symbols[which(gene_symbols != "?")]
-```
-
-Observe the type of sample according to the TCGA barcode and delete the normal (type "11") https://docs.gdc.
-cancer.gov/Encyclopedia/pages/TCGA_Barcode/
-```{r}
-sample_type <- substr(x = colnames(brca_rnaseq), start = 14, stop = 15)
-brca_rnaseq <- brca_rnaseq[,-which(sample_type == "11")]
-sample_type <- sample_type[-which(sample_type == "11")]
-```
-
-Match between TN samples (clinical) and RNAseq data
-```{r}
-tn_match <- match(gsub(pattern = "-", replacement = "\\.", x = tn_samples),
-substr(x = colnames(brca_rnaseq), start = 1, stop = 12))
-tn_match_na <- which(is.na(tn_match))
-brca_clin <- brca_clin[,-tn_match_na]
-tn_samples <- tn_samples[-tn_match_na]
-tn_match <- tn_match[-tn_match_na]
-brca_rnaseq <- brca_rnaseq[,tn_match]
-
-brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq 
-
-```
-
-# Normalization of the dataset
-```{r}
-brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
-```
-## Use ComBat results instead
-```{r}
-
+# Change the working directory to the folder where the the file lives
 setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
-train <- read.csv("ComBat/ComBat_train.csv", row.names = "row.names")
-test <- read.csv("ComBat/ComBat_test.csv", row.names = "row.names")
+
+# Read the csv file
+train <- read.csv("ComBat/ComBat.csv", row.names = "row.names")
+#test <- read.csv("ComBat/ComBat_test.csv", row.names = "row.names")
 ```
+
+```{r}
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clinical_data_comparison")
+combo_combat_mad <- read.csv("clinical_data_combat_mad.csv", row.names = "row.names")
+#write_csv(x = combo, file="clinical_data_combat.csv")
+cy_mat_combat <- read.csv("exprs_data_combat.csv", row.names = "row.names")
+cy_mat_combat_mad <- read.csv("exprs_data_combat_mad.csv", row.names = "row.names")
+```
+
 
 ```{r}
 #MAD to filter genes and PCA
-cy_mat_combat_mad_train <- apply(train, 1, mad)
-train <- train[which(cy_mat_combat_mad_train > 1),]
+#cy_mat_combat_mad_train <- apply(train, 1, mad)
+#train <- train[which(cy_mat_combat_mad_train > 1),]
 
-cy_mat_combat_mad_test <- apply(test, 1, mad)
-test <- test[which(cy_mat_combat_mad_test > 1),]
+#cy_mat_combat_mad_test <- apply(test, 1, mad)
+#test <- test[which(cy_mat_combat_mad_test > 1),]
 ```
 
 
@@ -116,8 +55,9 @@ PCA
 ```{r}
 # Principal components analysis
 
-x_train <- prcomp(train, scale = FALSE)
-x_test <- prcomp(test, scale = FALSE)
+#x_train <- prcomp(train, scale = FALSE)
+x_train <- prcomp(t(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+
 ```
 
 Visualize eigenvalues (scree plot)
@@ -126,17 +66,17 @@ library(factoextra)
 
 #Show the percentage of variances explained by each principal component.
 fviz_eig(x_train)
-fviz_eig(x_test)
+#fviz_eig(x_test)
 ```
 
 Re-labeling the patients IDs
 ```{r}
 # We check that the patient ID doesn't repeat
 temp_train <- table(x_train[["x"]])
-temp_test <- table(x_test[["x"]])
+#temp_test <- table(x_test[["x"]])
 
 isTRUE(any(temp_train > 1)) # if the result is FALSE, they appear only once
-isTRUE(any(temp_test > 1)) # if the result is FALSE, they appear only once
+#isTRUE(any(temp_test > 1)) # if the result is FALSE, they appear only once
 ```
 We save the original IDs in another list inside of x
 ```{r}
@@ -145,18 +85,18 @@ short_IDs_train <- as.character(matrix(data = 1:nrow(x_train[["x"]]), ncol = 1))
 IDs_train <- cbind(orig_IDs_train, short_IDs_train) # we bind them in the same matrix
 x_train[["IDs"]] <- IDs_train # We append the new IDs matrix to the x list
 
-orig_IDs_test <- matrix(row.names(x_test[["x"]]), ncol = 1) # we store the original IDs
-short_IDs_test <- as.character(matrix(data = 1:nrow(x_test[["x"]]), ncol = 1)) # we store the short IDs
-IDs_test <- cbind(orig_IDs_test, short_IDs_test) # we bind them in the same matrix
-x_test[["IDs"]] <- IDs_test # We append the new IDs matrix to the x list
+#orig_IDs_test <- matrix(row.names(x_test[["x"]]), ncol = 1) # we store the original IDs
+#short_IDs_test <- as.character(matrix(data = 1:nrow(x_test[["x"]]), ncol = 1)) # we store the short IDs
+#IDs_test <- cbind(orig_IDs_test, short_IDs_test) # we bind them in the same matrix
+#x_test[["IDs"]] <- IDs_test # We append the new IDs matrix to the x list
 ```
 
 We proceed to assign a unique number to each patient
 ```{r}
-row.names(x_train[["x"]]) <- short_IDs_train
-row.names(x_test[["x"]]) <- short_IDs_test
+row.names(x_train[["x"]]) <- make.names(short_IDs_train, unique=TRUE)
+#row.names(x_test[["x"]]) <- short_IDs_test
 
-head(x_test[["x"]])
+head(x_train[["x"]])
 ```
 
 Graph of individuals
@@ -171,6 +111,7 @@ fviz_pca_ind(x_train,
              max.overlaps = Inf
              )
 ```
+
 ```{r}
 # test
 fviz_pca_ind(x_test,
@@ -188,7 +129,7 @@ fviz_pca_ind(x_test,
 ```{r}
 # Coordinates of individuals
 ind.coord_train <- as.data.frame(get_pca_ind(x_train)$coord)
-ind.coord_test <- as.data.frame(get_pca_ind(x_test)$coord)
+#ind.coord_test <- as.data.frame(get_pca_ind(x_test)$coord)
 #head(ind.coord)
 ```
 Loading the library
@@ -201,18 +142,34 @@ library(M3C)
 
 PCA
 ```{r}
-data_pca_train <- pca(train,legendtextsize = 10,axistextsize = 10,dotsize=2)
-data_pca_test <- pca(test,legendtextsize = 10,axistextsize = 10,dotsize=2)
+train <- cy_mat_combat[which(cy_mat_combat_mad > 1),]
+```
+
+```{r}
+data_pca_train <- pca(train, legendtextsize = 10,axistextsize = 10,dotsize=2)
+#data_pca_test <- pca(test,legendtextsize = 10,axistextsize = 10,dotsize=2)
 ```
 Performing the consensus clustering on the normalized data
 ```{r}
 # for vignette
-res_train <- M3C(t(train), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
-res_test <- M3C(t(test), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
+res_train <- M3C(data.frame(train), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
+#res_test <- M3C(t(test), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
 
 optimal_k_pac_train = max(res_train[["assignments"]]);
-optimal_k_pac_test = max(res_test[["assignments"]]);
+#'optimal_k_pac_test = max(res_test[["assignments"]]);
 ```
+
+```{r}
+# Save an object to a file
+saveRDS(res_train, file = "consensus_clustering_res_new.rds")
+# Restore the object
+#readRDS(file = "my_data.rds")
+```
+
+```{r}
+res_train <- readRDS(file = "consensus_clustering_res_new.rds")
+```
+
 # Checking the scores
 
 The scores and p values are contained within the res$scores object. We can see below the RCSI reaches a maxima at K = 2, the p value supports this optimal K decision. This means the null hypothesis that K = 1 can be rejected for this dataset because we have achieved significance (alpha=0.05) versus a dataset with no clusters.
@@ -280,11 +237,11 @@ res_test$plots[[3]]
 We use information entropy and aim to minimise it to find K, where lower values correspond to less uncertainty in the system (more stability during resampling). Whilst this function often gives pretty similar results to the PAC score, it makes better theoretical sense because it does not rely on a subjective window, neither does it rely on calculating a CDF first and a metric from this CDF second.
 
 ```{r}
-res_entropy_train <- M3C(t(train), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
+res_entropy_train <- M3C(train, method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
 optimal_k_entropy_train = max(res_entropy_train$assignments)
 
-res_entropy_test <- M3C(t(test), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
-optimal_k_entropy_test = max(res_entropy_test$assignments)
+#res_entropy_test <- M3C(t(test), method = 2,fsize=8, lthick=1, dotsize=1.25, removeplots = TRUE)
+#optimal_k_entropy_test = max(res_entropy_test$assignments)
 ```
 
 ```{r}
@@ -319,16 +276,17 @@ occurred by chance alone. We can turn to examine the output objects that M3C gen
 
 The 3 lines below extract the ordered (according in clustering results) expression data and the ordered annotation data from the results object after running M3C for a 2 cluster solution. We then take a look at the annotation object M3C outputs, a consensus cluster column has been added by M3C.
 
+
 ```{r}
-# k_clusters = 5 # uncomment to test other k values
+k_clusters_train = 2 # uncomment to test other k values
 
 data_train <- res_train$realdataresults[[k_clusters_train]]$ordered_data
 annon_train <- res_train$realdataresults[[k_clusters_train]]$ordered_annotation    
 ccmatrix_train <- res_train$realdataresults[[k_clusters_train]]$consensus_matrix
 
-data_test <- res_test$realdataresults[[k_clusters_test]]$ordered_data
-annon_test <- res_test$realdataresults[[k_clusters_test]]$ordered_annotation  
-ccmatrix_test <- res_test$realdataresults[[k_clusters_test]]$consensus_matrix
+#data_test <- res_test$realdataresults[[k_clusters_test]]$ordered_data
+#annon_test <- res_test$realdataresults[[k_clusters_test]]$ordered_annotation  
+#ccmatrix_test <- res_test$realdataresults[[k_clusters_test]]$consensus_matrix
 #head(annon)
 ```
 
@@ -414,6 +372,201 @@ ggscatter(
 ) +
   stat_mean(aes(color = cluster), size = 4)
 ```
+```{r}
+library(ggrepel)
+library(factoextra)
+
+#combo_combat <- filter(combo, rownames(combo) %in% colnames(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+histological_type <- as.factor(combo_combat_mad$histological_type)
+ind.coord_train$histological_type <- histological_type
+
+histological_grade <- as.factor(combo_combat_mad$histological_grade)
+ind.coord_train$histological_grade <- histological_grade
+
+age <- as.factor(combo_combat_mad$age)
+tumor_size <- as.factor(combo_combat_mad$tumor_size_mm)
+#treatment <- as.factor(sampleInfo$treatment)
+#methastasis <- as.factor(sampleInfo$methastasis)
+
+library(ggpubr)
+
+ggscatter(
+  ind.coord_train, x = "Dim.1", y = "Dim.2", palette = "npg", ellipse = TRUE, ellipse.type = "convex", size = 1.5,  legend = "right", ggtheme = theme_bw(), color = "histological_grade",
+  xlab = paste0("Dim 1 (", variance.percent_train[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent_train[2], "% )" )
+)
+```
+# PLOTTING CLINICAL DATA PER CLUSTER
+```{r}
+clin_data1 <- RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 1),]
+clin_data2 <- RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 2),]
+```
+
+## Plotting age_level
+
+```{r}
+library(glue)
+
+for(vars in c("age_label", "race", "histological_grade", "histological_type", "tumor_size", "response_to_treatment", "pathological_history", "family_pathological_hsitory", "age", "tumor_size_mm", "age_at_menarche")){
+  var1 <- as.data.frame(table(clin_data1[vars]))
+  cluster_info <- as.data.frame(rep("1",nrow(var1)))
+  var1 <- cbind(cluster_info, var1)
+  colnames(var1) <- c("cluster_info", "variable", "count")
+  
+  
+  var2 <- as.data.frame(table(clin_data2[vars]))
+  cluster_info <- as.data.frame(rep("2",nrow(var2)))
+  var2 <- cbind(cluster_info, var2)
+  colnames(var2) <- c("cluster_info", "variable", "count")
+  
+  merged_df <- rbind(var1, var2)
+  merged_df
+  
+  ## PLOTS
+  library(ggplot2)
+  
+  # Grouped barcharts
+  plt <- ggplot(merged_df, aes(x=cluster_info, y=count, fill=variable)) + 
+      geom_bar(position="dodge", stat="identity")
+  
+  if(vars %in% c("age", "tumor_size_mm", "age_at_menarche")){
+    merged_df <- rbind(clin_data1[c("consensuscluster",vars)], clin_data2[c("consensuscluster",vars)])
+    colnames(merged_df) <- c("consensuscluster","vars")
+    
+    plt <- ggplot(merged_df, aes(x=vars, group=consensuscluster, fill=consensuscluster)) + 
+      geom_density(alpha=.4) + ggtitle
+  }
+  
+  print(plt)
+}
+
+```
+
+```{r}
+boxplot(na.omit(clin_data1["age"]))
+boxplot(na.omit(clin_data2["age"]))
+```
+
+
+```{r}
+library(ggplot2)
+# Grouped
+ggplot(merged_df, aes(x=cluster_info, y=count, fill=age_label)) + 
+    geom_bar(position="dodge", stat="identity")
+
+```
+
+
+
+
+# SIGNIFICANCE TESTS ON CLINICAL INFORMATION
+
+We gather the RNA-seq data and clinical data
+```{r}
+# RNA-seq data and cluster annotation
+RNA_seq_data <- res_train$realdataresults[[2]][["ordered_data"]]
+RNA_seq_cluster_annotation <- res_train$realdataresults[[2]][["ordered_annotation"]]
+
+# Joining expression and cluster annotation
+RNA_seq_merged <- as.data.frame(t(rbind(RNA_seq_data, t(RNA_seq_cluster_annotation))))
+
+# Clinical data
+RNA_clin_data <- combo_combat_mad
+RNA_clin_data <- merge(RNA_clin_data, RNA_seq_cluster_annotation, by="row.names")
+rownames(RNA_clin_data) <- RNA_clin_data$Row.names
+```
+
+## Looking at the clinical data
+```{r}
+RNA_clin_data
+```
+
+## Chi2 test on histological type
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$histological_type)
+```
+
+```{r}
+library(plyr)
+
+RNA_clin_data$histological_type <- mapvalues(RNA_clin_data$histological_type, c("Mixed (not specified)"), c("Not specified"))
+
+unique(RNA_clin_data$histological_type)
+```
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "histological_type"
+values_to_check <- unique(RNA_clin_data$histological_type)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+
+
+
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "histological_type"
+values_to_check <- unique(RNA_clin_data$histological_type)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$histological_type)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$histological_type)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), histological_type = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
 
 ### test
 ```{r}
@@ -441,12 +594,630 @@ ggscatter(
   stat_mean(aes(color = cluster), size = 4)
 ```
 
-# Visual check of consensus cluster structure
+
+## Chi2 test on race
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$race)
+```
 
 ```{r}
-pca(data, labels = annon$consensuscluster,legendtextsize = 10,axistextsize = 10,dotsize=2)
+library(plyr)
+
+RNA_clin_data$race <- mapvalues(RNA_clin_data$race, c("W", "B", "H"), c("not hispanic or latino", "not hispanic or latino", "hispanic or latino"))
+
+unique(RNA_clin_data$race)
+```
+
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "race"
+values_to_check <- unique(RNA_clin_data$race)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
 
 ```
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "race"
+values_to_check <- unique(RNA_clin_data$race)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$race)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$race)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), race = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+## Chi2 test on histological grade
+
+```{r}
+head(RNA_clin_data)
+```
+
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$histological_grade)
+```
+
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "histological_grade"
+values_to_check <- unique(RNA_clin_data$histological_grade)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "histological_grade"
+values_to_check <- unique(RNA_clin_data$histological_grade)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$histological_grade)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$histological_grade)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), histological_grade = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+
+## Fisher test on age
+
+```{r}
+head(RNA_clin_data)
+```
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$age)
+```
+
+```{r}
+library(plyr)
+
+RNA_clin_data$age_label <- RNA_clin_data$age
+
+for(age_row in 1:nrow(RNA_clin_data)){
+  if(is.na(RNA_clin_data[age_row,"age"]) == FALSE){
+    if(RNA_clin_data[age_row,"age"] < 40){
+      RNA_clin_data[age_row,"age_label"] <- "Young adult" 
+    }
+    if(RNA_clin_data[age_row,"age"] >= 40 & RNA_clin_data[age_row,"age"] < 60){
+      RNA_clin_data[age_row,"age_label"] <- "Adult" 
+    }
+    if(RNA_clin_data[age_row,"age"] >= 60){
+      RNA_clin_data[age_row,"age_label"] <- "Elder" 
+    }
+  }
+}
+
+unique(RNA_clin_data$age_label)
+```
+
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "age_label"
+values_to_check <- unique(RNA_clin_data$age_label)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+  print(value)
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "age_label"
+values_to_check <- unique(RNA_clin_data$age_label)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$age_label)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$age_label)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), age_label = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+
+## Chi2 test on tumor stage
+
+```{r}
+head(RNA_clin_data)
+```
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$tumor_stage)
+```
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "tumor_stage"
+values_to_check <- unique(RNA_clin_data$tumor_stage)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+  print(value)
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- c("0", "1")
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "tumor_stage"
+values_to_check <- unique(RNA_clin_data$tumor_stage)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$tumor_stage)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$tumor_stage)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), tumor_stage = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+## Fisher test on age at menarche
+
+```{r}
+head(RNA_clin_data)
+```
+
+Checking the unique values of that clinical value
+```{r}
+unique(RNA_clin_data$age_at_menarche)
+```
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "age_at_menarche"
+values_to_check <- unique(RNA_clin_data$age_at_menarche)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+  print(value)
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "age_at_menarche"
+values_to_check <- unique(RNA_clin_data$age_at_menarche)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$age_at_menarche)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$age_at_menarche)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), age_at_menarche = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+## Fisher test on tumor size
+
+```{r}
+head(RNA_clin_data)
+```
+
+Checking the unique values of that clinical value
+```{r}
+sort(unique(RNA_clin_data$tumor_size_mm))
+```
+
+```{r}
+library(plyr)
+
+RNA_clin_data$tumor_size <- RNA_clin_data$tumor_size_mm
+
+for(age_row in 1:nrow(RNA_clin_data)){
+  if(is.na(RNA_clin_data[age_row,"tumor_size_mm"]) == FALSE){
+    if(RNA_clin_data[age_row,"tumor_size_mm"] < 20){
+      RNA_clin_data[age_row,"tumor_size"] <- "Below 20 mm" 
+    }
+    if(RNA_clin_data[age_row,"tumor_size_mm"] >= 20 & RNA_clin_data[age_row,"tumor_size_mm"] < 80){
+      RNA_clin_data[age_row,"tumor_size"] <- "Between 20 and 80 mm" 
+    }
+    if(RNA_clin_data[age_row,"tumor_size_mm"] >= 80){
+      RNA_clin_data[age_row,"tumor_size"] <- "Greater than 80 mm" 
+    }
+  }
+}
+
+unique(RNA_clin_data$tumor_size)
+```
+
+
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "tumor_size"
+values_to_check <- unique(RNA_clin_data$tumor_size)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for(value in c(values_to_check)){
+  print(value)
+    # is the row cluster 1 or cluster 2
+    cluster1_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2_no <- length(which(RNA_clin_data[,variable_to_check] == value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster1 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 1 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    cluster2 <- length(which(RNA_clin_data[,variable_to_check] != value & RNA_clin_data[,"consensuscluster"] == 2 & is.na(RNA_clin_data[,variable_to_check]) != TRUE))
+    
+    df <- data.frame(cluster1=c(0,0), cluster2=c(0,0))
+    
+   
+    df$cluster1 <- c(cluster1_no, cluster1)
+    df$cluster2 <- c(cluster2_no, cluster2)
+    rownames(df) <- c("0", "1")
+    
+    chisq_test_var <- chisq.test(df)
+    mut_chisq_test <- c(chisq_test_var$p.value)
+    # appending each name into a vector
+    #mut_chisq_test_names <- c(mut_chisq_test_names, paste(rownames(RNA_clin_data)[mut]))
+    #print(f_test_var$p.value)
+  
+    print(df)
+    
+    # we save the P values and FDR of each test
+    mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+    colnames(mut_chisq_test) <- c("p_value", "fdr")
+    #rownames(mut_chisq_test) <- mut_chisq_test_names
+    
+    # we order the resulting matrix by P value
+    print(value)
+    print(mut_chisq_test)
+}
+
+```
+Doing the chi2 test on the entire feature
+```{r}
+## counting 1s and 0s per gene and per cluster
+mut_chisq_test_names <- c()
+variable_to_check <- "tumor_size"
+values_to_check <- unique(RNA_clin_data$tumor_size)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+# is the row cluster 1 or cluster 2
+cluster1 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 1),]$tumor_size)
+cluster2 <- table(RNA_clin_data[which(RNA_clin_data[,"consensuscluster"] == 2),]$tumor_size)
+
+clusters_df <-  cbind(cluster1, cluster2)
+clusters_df <- as.table(t(clusters_df))
+dimnames(clusters_df) <- list(cluster = c("1", "2"), tumor_size = c(colnames(clusters_df)))
+
+chisq_test_var <- chisq.test(clusters_df)
+mut_chisq_test <- c(chisq_test_var$p.value)
+
+# we save the P values and FDR of each test
+mut_chisq_test <- cbind(mut_chisq_test, p.adjust(mut_chisq_test))
+colnames(mut_chisq_test) <- c("p_value", "fdr")
+
+# we order the resulting matrix by P value
+print(chisq_test_var)
+print(mut_chisq_test)
+
+```
+
+
+
+# Mutations
+We download the mutations from the different sources
+
+Ref 2 mutations
+```{r}
+mut_Ref2 <- read.delim(file = "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\Ref 2\\Ref2_untar\\brca_metabric\\data_mutations.txt", sep = "\t", header = T, stringsAsFactors = F, skip = 1)
+
+head(mut_Ref2)
+```
+
+Ref 4 mutations
+```{r}
+mut_Ref4 <- read.delim(file = "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\Ref 4\\Ref4_untar\\brca_mbcproject_wagle_2017\\data_mutations.txt", sep = "\t", header = T, stringsAsFactors = F, skip = 0)
+
+head(mut_Ref4)
+```
+
+TCGA mutations
+```{r}
+mut_TCGA <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/R/TNBC research/TNBC_research/BRCA-TP.final_analysis_set.maf", sep = "\t", header = T, stringsAsFactors = F)
+
+head(mut_TCGA)
+```
+Merging the mutation datasets
+```{r}
+# Columns in common with all the mutation datasets
+merged_mut_cols <- intersect(colnames(mut_Ref2), colnames(mut_Ref4))
+merged_mut_cols <- intersect(merged_mut_cols, colnames(mut_TCGA))
+
+# Merged mutation datasets
+merged_mut <- rbind(mut_Ref2[merged_mut_cols], mut_Ref4[merged_mut_cols])
+merged_mut <- rbind(merged_mut, mut_TCGA[merged_mut_cols])
+
+head(merged_mut)
+```
+
+We check the data frame dimensions
+```{r}
+dim(merged_mut)
+```
+
+We drop mutations related to: UTR, introns, RNA and silent.
+```{r}
+mut_filters <- c("3'UTR", "5'Flank", "5'UTR", "IGR", "Intron", "Silent", "RNA")
+mut_filter_index <- which(merged_mut$Variant_Classification %in% mut_filters)
+merged_mut <- merged_mut[-mut_filter_index,]
+
+dim(merged_mut)
+```
+
+We can observe the type of mutation in the column "Variant_Classification"
+```{r}
+table(merged_mut$Variant_Classification)
+```
+
+Obtenemos las distintas muestras y genes para hacer una matriz donde va a guardar 0 y 1 dependiendo si
+hay presencia de la mutación.
+```{r}
+u_samples <- sort(unique(merged_mut$Tumor_Sample_Barcode))
+u_genes <- sort(unique(merged_mut$Hugo_Symbol))
+mut_matrix <- matrix(0, nrow=length(u_genes), ncol=length(u_samples),
+
+dimnames = list(u_genes, u_samples))
+
+mut_matrix[1:5, 1:5]
+
+mut_matrix <- mut_matrix[,-1]
+
+mut_matrix[1:5, 1:5]
+```
+
+Llenamos la matriz al hacer un ciclo por muestra
+```{r}
+for(i in colnames(mut_matrix)){
+aux_genes <- merged_mut$Hugo_Symbol[which(merged_mut$Tumor_Sample_Barcode == i)]
+mut_matrix[aux_genes, i] <- 1
+}
+```
+
 
 Defining the cluster groups with the patient IDs
 
@@ -461,23 +1232,344 @@ for (i in seq(1, k_clusters)) {
                               }
 ```
 
+We gather the clinical information, each row is a clinical variable
+```{r}
+head(RNA_clin_data)
+```
+We observe the difference in the naming convention of mutations and rna-seq data, as well as the difference in dimensions. We can compare the first 16 characters.
+
+```{r}
+raw_brca_rnaseq <- RNA_seq_merged
+
+mut_rnaseq_match <- match(gsub(pattern = "-", replacement = "\\.",
+x = substr(colnames(mut_matrix), 1, 16)),
+substr(rownames(raw_brca_rnaseq), 1, 16))
+
+# mut_rnaseq_match_cluster_1 <- match(gsub(pattern = "-", replacement = "\\.",
+# x = substr(colnames(mut_matrix), 1, 16)),
+# substr(rownames(raw_brca_rnaseq[which(raw_brca_rnaseq$consensuscluster == 1),]), 1, 16))
+# 
+# mut_rnaseq_match_cluster_2 <- match(gsub(pattern = "-", replacement = "\\.",
+# x = substr(colnames(mut_matrix), 1, 16)),
+# substr(rownames(raw_brca_rnaseq[which(raw_brca_rnaseq$consensuscluster == 2),]), 1, 16))
+
+mut_rnaseq_match
+```
+```{r}
+raw_brca_rnaseq <- t(RNA_seq_merged)
+
+# to store the NA values postitions
+
+mut_rnaseq_match_nonNA <- which(!is.na(mut_rnaseq_match))
+# mut_rnaseq_match_nonNA_cluster1 <- which(!is.na(mut_rnaseq_match_cluster_1))
+# mut_rnaseq_match_nonNA_cluster2 <- which(!is.na(mut_rnaseq_match_cluster_2))
+
+# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
+mut_matrix_rna <- mut_matrix[,mut_rnaseq_match_nonNA]
+mut_rnaseq_match <- mut_rnaseq_match[mut_rnaseq_match_nonNA]
+
+# mut_matrix_rna_cluster1 <- mut_matrix[,mut_rnaseq_match_nonNA_cluster1]
+# mut_rnaseq_match_cluster1 <- mut_rnaseq_match_cluster_1[mut_rnaseq_match_nonNA_cluster1]
+# 
+# mut_matrix_rna_cluster2 <- mut_matrix[,mut_rnaseq_match_nonNA_cluster2]
+# mut_rnaseq_match_cluster2 <- mut_rnaseq_match_cluster_2[mut_rnaseq_match_nonNA_cluster2]
+
+# to store only the rna_seq values that match the mutations
+rna_mut <- raw_brca_rnaseq[,mut_rnaseq_match]
+
+# rna_mut_cluster1 <- raw_brca_rnaseq[,mut_rnaseq_match_cluster_1]
+# rna_mut_cluster1 <- as.data.frame(rna_mut_cluster1)
+# rna_mut_cluster1 <- rna_mut_cluster1[,which(unlist(lapply(rna_mut_cluster1, function(x) !all(is.na(x)))))]
+# 
+# rna_mut_cluster2 <- raw_brca_rnaseq[,mut_rnaseq_match_cluster_2]
+# rna_mut_cluster2 <- as.data.frame(rna_mut_cluster2)
+# rna_mut_cluster2 <- rna_mut_cluster2[,which(unlist(lapply(rna_mut_cluster2, function(x) !all(is.na(x)))))]
+
+cbind(colnames(mut_matrix_rna)[c(1,20,50,54)], colnames(rna_mut)[c(1,20,50,54)])
+```
+We filter the genes in RNA-seq that show no variation and we keep the most frequent mutations only.
+```{r}
+# We convert all the dataframe as numeric
+rna_mut <- mutate_all(data.frame(rna_mut), function(x) as.numeric(as.character(x)))
+# rna_mut_cluster1 <- mutate_all(data.frame(rna_mut_cluster1), function(x) as.numeric(as.character(x)))
+# rna_mut_cluster2 <- mutate_all(data.frame(rna_mut_cluster2), function(x) as.numeric(as.character(x)))
+
+rna_mut <- mutate_all(data.frame(rna_mut), function(x) as.numeric(as.character(x)))
+# rna_mut_cluster1 <- mutate_all(data.frame(rna_mut_cluster1), function(x) as.numeric(as.character(x)))
+# rna_mut_cluster2 <- mutate_all(data.frame(rna_mut_cluster2), function(x) as.numeric(as.character(x)))
+
+# We apply the mad function
+rna_mut_mad <- apply(rna_mut, 1, mad)
+mad_zero <- which(rna_mut_mad == 0)
+rna_mut <- rna_mut[-mad_zero,]
+table(apply(mut_matrix_rna,1,sum))
+
+#rna_mut_mad_cluster1 <- apply(rna_mut_cluster1, 1, mad)
+#mad_zero_cluster1 <- which(rna_mut_mad_cluster1 == 0)
+#rna_mut_cluster1 <- rna_mut_cluster1[-mad_zero_cluster1,]
+
+#rna_mut_mad_cluster2 <- apply(rna_mut_cluster2, 1, mad)
+#mad_zero_cluster2 <- which(rna_mut_mad_cluster2 == 0)
+#rna_mut_cluster2 <- rna_mut_cluster2[-mad_zero_cluster2,]
+```
+
+```{r}
+# We count the times each mutation appears in the matrix
+mut_matrix_rna_count <- apply(mut_matrix_rna,1,sum)
+# mut_matrix_rna_count_cluster1 <- apply(mut_matrix_rna_cluster1,1,sum)
+# mut_matrix_rna_count_cluster2 <- apply(mut_matrix_rna_cluster2,1,sum)
+
+# if the mutation count is greater than 9, we add it to the mut_matrix_rna
+mut_matrix_rna <- mut_matrix_rna[which(mut_matrix_rna_count > 9),]
+# mut_matrix_rna_count_cluster1 <- mut_matrix_rna_cluster1[which(mut_matrix_rna_count_cluster1 > 9),]
+# mut_matrix_rna_count_cluster2 <- mut_matrix_rna_cluster2[which(mut_matrix_rna_count_cluster2 > 9),]
+
+mut_matrix_rna
+```
+
+## T-test mutations merged
+
+We run a t-test to know which genes change according to the mutations
+```{r}
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for(i in 1:nrow(mut_matrix_rna)){
+#for(i in 1:2){
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
+
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+aux_test <- t.test(formula=expmut, data=data.frame(mut=mut_matrix_rna[i,],
+exp=as.matrix(rna_mut)[x,]));
+
+aux_test$p.value
+}))
+
+# appending each test into a vector
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+# appending each name into a vector
+mut_rna_test_names <- c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i], rownames(rna_mut), sep="_"))
+
+}
+
+# we save the P values and FDR of each test
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
+
+```
+
+Export the dataframe with the p-values to a csv file
+```{r}
+mut_rna_test <- as.data.frame(mut_rna_test)
+mut_rna_test$row_names <- rownames(mut_rna_test)
+
+write.csv(as.data.frame(mut_rna_test),"C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clustering\\Mutations_merged_T_test.csv", row.names = FALSE)
+```
+
+## T-test mutations per cluster
+
+```{r}
+mut_matrix_rna <- as.data.frame(mut_matrix_rna)
+head(mut_matrix_rna)
+```
+
+```{r}
+head(rna_mut)
+```
+
+```{r}
+RNA_seq_merged <- as.data.frame(t(RNA_seq_merged))
+head(RNA_seq_merged)
+```
+
+```{r}
+colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 2)])
+```
+
+```{r}
+colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 1)])
+```
+
+```{r}
+mut_rnaseq_match_cluster1 <- match(gsub(pattern = "-", replacement = "\\.",
+                          x = substr(colnames(rna_mut), 1, 16)),
+                          substr(colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 1)]), 1, 16))
+
+# to store the NA values postitions
+NA_cluster1 <- which(is.na(mut_rnaseq_match_cluster1))
+
+# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
+mut_matrix_rna_cluster1 <- mut_matrix_rna[,-NA_cluster1]
+mut_rnaseq_match_cluster1 <- mut_rnaseq_match_cluster1[-NA_cluster1]
+rna_mut_cluster1 <- rna_mut[-NA_cluster1]
+
+print(dim(rna_mut_cluster1))
+print(dim(mut_matrix_rna_cluster1))
+```
+```{r}
+mut_rnaseq_match_cluster2 <- match(gsub(pattern = "-", replacement = "\\.",
+                          x = substr(colnames(rna_mut), 1, 16)),
+                          substr(colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 2)]), 1, 16))
+
+# to store the NA values postitions
+NA_cluster2 <- which(is.na(mut_rnaseq_match_cluster2))
+
+# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
+mut_matrix_rna_cluster2 <- mut_matrix_rna[,-NA_cluster2]
+mut_rnaseq_match_cluster2 <- mut_rnaseq_match_cluster2[-NA_cluster2]
+rna_mut_cluster2 <- rna_mut[-NA_cluster2]
+
+print(dim(rna_mut_cluster2))
+print(dim(mut_matrix_rna_cluster2))
+```
+
+
+CLUSTER 1 
+---------
+We run a t-test to know which genes change according to the mutations 
+```{r}
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for(i in 1:nrow(mut_matrix_rna_cluster1)){
+#for(i in 1:2){
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+aux_mut_test <- t(sapply(1:nrow(rna_mut_cluster1), function(x) {
+
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+aux_test <- t.test(formula=exp~mut, data=data.frame(mut=as.matrix(mut_matrix_rna_cluster1)[i,],
+exp=as.matrix(rna_mut_cluster1)[x,]));
+
+aux_test$p.value
+}))
+
+# appending each test into a vector
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+# appending each name into a vector
+mut_rna_test_names <- c(mut_rna_test_names, paste(rownames(mut_matrix_rna_cluster1)[i], rownames(rna_mut_cluster1), sep="_"))
+
+}
+
+# we save the P values and FDR of each test
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
+
+```
+
+CLUSTER 2 
+---------
+We run a t-test to know which genes change according to the mutations 
+```{r}
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for(i in 1:nrow(mut_matrix_rna_cluster2)){
+#for(i in 1:2){
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+aux_mut_test <- t(sapply(1:nrow(rna_mut_cluster2), function(x) {
+
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+  
+print(i)
+print(x)
+print('------------')
+aux_test <- t.test(formula=exp,mut, data=data.frame(mut=as.matrix(mut_matrix_rna_cluster2)[i,],
+exp=as.matrix(rna_mut_cluster2)[x,]));
+
+aux_test$p.value
+}))
+
+# appending each test into a vector
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+# appending each name into a vector
+mut_rna_test_names <- c(mut_rna_test_names, paste(rownames(mut_matrix_rna_cluster2)[i], rownames(rna_mut_cluster2), sep="_"))
+
+}
+
+# we save the P values and FDR of each test
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
+
+```
+
+## Chi2 mutations merged
+
+We run a chi2 to know which genes change according to the mutations
+```{r}
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for(i in 1:nrow(mut_matrix_rna)){
+#for(i in 1:2){
+# we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+
+# mutation: the mutation row (presence or absence of mutation per gene sequence)
+# exp: the gene row of the rna_mut matrix
+ones1 <- sum(mut_matrix_rna_cluster1[i,])
+zeros1 <- length(mut_matrix_rna_cluster1[i,])-ones1
+
+ones2 <- sum(mut_matrix_rna_cluster2[i,])
+zeros2 <- length(mut_matrix_rna_cluster2[i,])-ones2
+
+mut_clust <- as.table(rbind(c(zeros1, zeros2), c(ones1, ones2)))
+dimnames(mut_clust) <- list(status = c("No mutation","Mutation"),
+                            cluster = c("1","2"))
+
+aux_mut_test <- chisq.test(mut_clust)$p.value
+
+#aux_test$p.value
+
+# appending each test into a vector
+mut_rna_test <- c(mut_rna_test, aux_mut_test)
+# appending each name into a vector
+mut_rna_test_names <- c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i]))
+
+}
+
+# we save the P values and FDR of each test
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[,"p_value"]),]
+mut_rna_test[1:5,]
+
+```
+
+
 ## Initial check of DEGs------------------------------------------
 
 ```{r}
 library('devtools')
-install_github('rsait/ORdensity')
+#install_github('rsait/ORdensity')
 library('ORdensity')
 ```
 
 ```{r}
 x <- train
-y <- test
+#y <- test
 EXC.1 <- as.matrix(x)
-EXC.2 <- as.matrix(y)
+#EXC.2 <- as.matrix(y)
 ```
 
 ```{r}
-myORdensity <- new("ORdensity", Exp_cond_1 = EXC.1, Exp_cond_2 = EXC.2)
+myORdensity <- new("ORdensity", Exp_cond_1 = EXC.1, Exp_cond_2 = EXC.1)
 ```
 
 ```{r}
@@ -547,17 +1639,15 @@ mut_matrix[1:5, 1:5]
 Llenamos la matriz al hacer un ciclo por muestra
 ```{r}
 for(i in colnames(mut_matrix)){
-aux_genes <- raw_mut$Hugo_Symbol[which(raw_mut$Tumor_Sample_Barcode == i)]
-mut_matrix[aux_genes, i] <- 1
-}
+                              aux_genes <- raw_mut$Hugo_Symbol[which(raw_mut$Tumor_Sample_Barcode == i)]
+                              mut_matrix[aux_genes, i] <- 1
+                              }
 ```
 
 
 We read the clinical information, each row is a clinical variable
 ```{r}
-clinical <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t",
-
-stringsAsFactors = F, row.names=1)
+clinical <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", stringsAsFactors = F, row.names=1)
 
 dim(clinical)
 ```
@@ -566,9 +1656,11 @@ To relate our genomic information with the clinical information, we detect the p
 ```{r}
 grep(pattern = "barcode", x = rownames(clinical))
 ```
+
 ```{r}
 rownames(clinical)[10]
 ```
+
 ## CORRELACION RNASEQ - MUTATIONS
 ```{r}
 colnames(mut_matrix)[1:5]
@@ -585,6 +1677,7 @@ dim(mut_matrix)
 ```{r}
 dim(raw_brca_rnaseq)
 ```
+
 We observe the difference in the naming convention of mutations and rna-seq data, as well as the difference in dimensions. We can compare the first 16 characters.
 
 ```{r}
@@ -607,7 +1700,8 @@ rna_mut <- raw_brca_rnaseq[,mut_rnaseq_match]
 
 cbind(colnames(mut_matrix_rna)[c(1,20,50,54)], colnames(rna_mut)[c(1,20,50,54)])
 ```
-We filter the genes in RNA-seq that show no variation and we keep the most frequent mutations only.
+W
+e filter the genes in RNA-seq that show no variation and we keep the most frequent mutations only.
 ```{r}
 rna_mut_mad <- apply(rna_mut, 1, mad)
 mad_zero <- which(rna_mut_mad == 0)
@@ -664,10 +1758,11 @@ mut_rna_test[1:5,]
 
 A row was added at the end of the RNAseq data (cluster_rna_mut) with the value of the cluster
 ```{r}
+res <- res_train
 
 # Setting the RNA mut data frame with the consensusCluster information (last col)
-cluster_rna_mut <- rbind(res$realdataresults[[2]][["ordered_data"]],
-                     t(res$realdataresults[[2]][["ordered_annotation"]]))
+cluster_rna_mut <- rbind(res$realdataresults[[2]][["ordered_data"]],       # RNA-seq data
+                     t(res$realdataresults[[2]][["ordered_annotation"]]))  # Cluster annotation row
 
 # Checking which mutations barcodes match the rnaseq in the clusters
 cluster_mut_rnaseq_match <- match(gsub(pattern = "-", replacement = "\\.",
@@ -710,7 +1805,7 @@ cluster_mut_matrix_rna <- rbind(cluster_mut_matrix_rna,
 
 # FISHER TEST PER MUTATION
 ```{r}
-# transposing the matrix, to have genes as records and mutations + clusters as fields
+# transposing the matrix, to have samles as records and genes + clusters as fields
 cluster_mut_matrix_rna_t <- t(cluster_mut_matrix_rna)
 
 ## counting 1s and 0s per gene and per cluster
