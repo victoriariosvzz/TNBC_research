@@ -1,0 +1,225 @@
+---
+title: "combat"
+author: "Victoria Rios"
+date: "3/22/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## ComBat
+```{r}
+# Importing the libraries
+options(stringsAsFactors=F)
+library(limma)
+library(sva)
+library(preprocessCore)
+```
+
+```{r}
+# Importing the datasets
+setwd("C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/")
+TCGA_db <- read.csv("TCGA/TCGA_TNBC_exprs.csv", row.names = "row.names")
+#TCGA_db <- t(TCGA_db)
+#Ref1_db <- read.csv("GSE87049/TCGA_TNBC_exprs.csv") #NA (lacking of TNBC data)
+Ref2_db <- read.csv("Ref 2/Ref2_untar/brca_metabric/Ref2_TNBC_exprs.csv", row.names = "row.names")
+Ref3_db <- read.csv("Ref 3/Ref3_untar/Ref3_TNBC_exprs.csv", row.names = "row.names")
+Ref4_db <- read.csv("Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_TNBC_exprs.csv", row.names = "row.names")
+RefGSE20271_db <- read.csv("GSE20271/GSE20271_TNBC_exprs.csv", row.names = "row.names")
+RefGSE575678_db <- read.csv("GSE575678/GSE75678_TNBC_exprs.csv", row.names = "row.names")
+```
+
+## Finding intersections with UpSetR
+
+```{r}
+# First, we create a dataframe per dataset, containing the unique genes of each one with a vector of 1s, to account for their frequency
+
+TCGA_vec<- data.frame("TCGA_vec" = rep(1, length(row.names(TCGA_db))))
+#row.names(TCGA_vec) <- row.names(TCGA_db)
+TCGA_vec$id <- row.names(TCGA_db)
+#rm(TCGA_db)
+
+Ref2_vec <- data.frame("Ref2_vec" = rep(1, length(row.names(Ref2_db))))
+#row.names(RefGSE575678_vec) <- row.names(RefGSE575678_db)
+Ref2_vec$id <- row.names(Ref2_db)
+#rm(Ref2_db)
+
+Ref3_vec <- data.frame("Ref3_vec" = rep(1, length(row.names(Ref3_db))))
+#row.names(Ref3_vec) <- row.names(Ref3_db)
+Ref3_vec$id <- row.names(Ref3_db)
+#rm(Ref3_db)
+
+Ref4_vec <- data.frame("Ref4_vec" = rep(1, length(row.names(Ref4_db))))
+#row.names(Ref4_vec) <- row.names(Ref4_db)
+Ref4_vec$id <- row.names(Ref4_db)
+#rm(Ref4_db)
+
+RefGSE20271_vec <- data.frame("RefGSE20271_vec" = rep(1, length(row.names(RefGSE20271_db))))
+#row.names(RefGSE20271_vec) <- row.names(RefGSE20271_db)
+RefGSE20271_vec$id <- row.names(RefGSE20271_db)
+#rm(RefGSE20271_db)
+
+RefGSE575678_vec <- data.frame("RefGSE575678_vec" = rep(1, length(row.names(RefGSE575678_db))))
+#row.names(RefGSE575678_vec) <- row.names(RefGSE575678_db)
+RefGSE575678_vec$id <- row.names(RefGSE575678_db)
+#rm(RefGSE575678_db)
+```
+
+```{r}
+library(tidyverse)
+#put all data frames into list
+df_list <- list(TCGA_vec, Ref2_vec, Ref3_vec, Ref4_vec, RefGSE20271_vec, RefGSE575678_vec)      
+
+#merge all data frames together
+#Reduce(function(x, y) merge(x, y, all=TRUE), df_list)  
+
+#merge all data frames together
+df_all = df_list %>% reduce(full_join, by='id')
+
+#fill NAs with 0
+df_all = replace(df_all, is.na(df_all), 0)
+
+#drop the id column and set is as the rownames
+row.names(df_all) <- df_all$id
+cols_df_all <- colnames(df_all)
+rows_df_all <- rownames(df_all)
+
+df_all <- t(df_all)
+#df_all <- as.data.frame(df_all)
+df_all <- as.data.frame(df_all)
+colnames(df_all) <- rows_df_all
+rownames(df_all) <- cols_df_all
+#df_all <- df_all[-2]
+
+#setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
+write_csv(x = df_all, file="ComBat/genes_present_all.csv")
+
+```
+
+```{r}
+df_all <- as.data.frame(sapply(df_all[-2,], as.numeric))
+rownames(df_all) <- cols_df_all[-2]
+```
+
+```{r}
+library(pheatmap)
+df_all_mat <- as.matrix(df_all)
+df_all_mat <- df_all_mat[, colSums(df_all_mat) > 2, drop=FALSE]
+
+pheatmap(df_all_mat, main = "Gene intersection between TNBC datasets", annotation_names_col = F, show_colnames = F)
+```
+
+## ComBat
+``````{r}
+# TODO test this for gene intersection
+
+# NOTES:
+# > The databases not used for the resulting database could serve as validation
+# > si se duplican muestras, quedarnos con 
+# > Revisar los datos clínicos:
+#    * Lo que diferencía a los 
+
+# Revisar si los genes diferenciados son relevantes solamente para TNBC o para el cáncer en general o para el TNBC (pruebas estadísticas)
+#   - Cluster 1 vs Base de datos original N (TNBC y otros)
+#   - Plot: exprs Cluster A, Cluster B y otras DB originales
+
+# TODO: DB before combat subir a Drive{r}
+# TODO test this for gene intersection
+
+#Intersect datasets and normalization
+common_genes <- sort(intersect(intersect(intersect(rownames(Ref2_db), rownames(TCGA_db)), intersect(rownames(Ref4_db), rownames(RefGSE20271_db))),rownames(RefGSE575678_db)))
+
+cy_mat <- cbind(TCGA_db[common_genes,], Ref2_db[common_genes,], Ref4_db[common_genes,], RefGSE20271_db[common_genes,], RefGSE575678_db[common_genes,])
+cy_mat <- cy_mat[complete.cases(cy_mat),]
+
+cy_mat_genes <- row.names(cy_mat)
+cy_mat_samples <- colnames(cy_mat)
+cy_mat <- normalize.quantiles(as.matrix(cy_mat))
+
+cy_mat <- as.data.frame(cy_mat, row.names = cy_mat_genes)
+colnames(cy_mat) <- cy_mat_samples
+
+cy_mat = apply(cy_mat, 2, function(x) as.numeric(as.character(x)))
+
+#MAD to filter genes and PCA
+cy_mat_mad <- apply(cy_mat, 1, mad)
+cy_mat_mad[is.na(cy_mat_mad)] <- 0
+
+cy_mat_batch <- c(rep(1, ncol(TCGA_db)), rep(2, ncol(Ref2_db)), rep(3, ncol(Ref4_db)), rep(4, ncol(RefGSE20271_db)), rep(5, ncol(RefGSE575678_db)))
+cy_mat_pca <- prcomp(cy_mat[which(cy_mat_mad > 1),])
+
+#Combat
+modcombat <- model.matrix(~1, data=data.frame(cmb=cy_mat_batch))
+cy_mat_combat <- ComBat(dat=cy_mat, batch=cy_mat_batch, mod=modcombat, par.prior=TRUE, prior.plots=FALSE)
+rownames(cy_mat_combat) <- cy_mat_genes
+
+#MAD to filter genes and PCA
+cy_mat_combat_mad <- apply(cy_mat_combat, 1, mad)
+cy_mat_combat_pca <- prcomp(t(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+
+cy_mat_combat_mad <- cy_mat_combat[which(cy_mat_combat_mad > 1),]
+
+#Plot PCA before and after Combat
+setwd("C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring")
+
+pdf("PCA_Before_Combat_1.pdf", width=9.2)
+par(mfrow=c(1,2))
+plot(cy_mat_pca$rotation[,1], cy_mat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Before Combat", col=cy_mat_batch, pch=19)
+legend(x=0.06, y=0.2, legend=c("TCGA", "Ref 2", "Ref 4","RefGSE20271_db","RefGSE575678_db"), col=c(1,2,3,4,5), pch=19)
+plot(cy_mat_combat_pca$rotation[,1], cy_mat_combat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Combat", col=cy_mat_batch, pch=19)
+legend(x=-0.006, y=0.125, legend=c("TCGA", "Ref 2", "Ref 4","RefGSE20271_db","RefGSE575678_db"), col=c(1,2,3,4,5), pch=19)
+dev.off()
+
+```
+
+Exporting the merged dataset
+```{r}
+library(readr)
+# store rownames in new column
+cy_mat_combat<- as.data.frame(cy_mat_combat)
+cy_mat_combat$row.names <- row.names(cy_mat_combat)
+
+cy_mat_combat_mad<- as.data.frame(cy_mat_combat_mad)
+cy_mat_combat_mad$row.names <- row.names(cy_mat_combat_mad)
+
+# store rownames in new column
+#sampleInfo_TNBC$row.names <- rownames(sampleInfo_TNBC)
+#full_annotation <- sampleInfo_TNBC
+
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
+write_csv(x = cy_mat_combat, file="ComBat/ComBat.csv")
+write_csv(x = cy_mat_combat_mad, file="ComBat/ComBat_mad.csv")
+```
+
+# Using TDM library
+```{r}
+library(TDM)
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
+
+# The file with the reference data has samples represented as rows,
+# and genes as columns, so this creates a column with gene names.
+temp_cy_mat <- t(cy_mat)
+ref_values = data.table::data.table(cbind(colnames(temp_cy_mat), temp_cy_mat))
+
+# Set the name of the column with the genes.
+data.table::setnames(ref_values, colnames(ref_values)[1], "gene")
+TDM::tdm_transform(ref_values, ref_file = "ComBat/cy_mat_db.csv")
+```
+
+
+```{r}
+#Tissue Type
+coadread_sample <- substr(colnames(coadread_rnaseq), 14,16)
+cy_mat_type <- rep("Cancer", ncol(cy_mat_combat))
+cy_mat_type[c(grep("normal", geoGSE25071_clin$Tissue), (which(coadread_sample == "11A")+120))] <- "Normal"
+
+#Plot PCA Tissue Type
+par(mfrow=c(1,2))
+plot(cy_mat_combat_pca$rotation[,1], cy_mat_combat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Combat", col=cy_mat_batch, pch=19)
+legend(x=-0.036, y=0.135, legend=c("GSE25071", "GSE39084", "TCGA"), col=c(1,2,3), pch=19)
+plot(cy_mat_combat_pca$rotation[,1], cy_mat_combat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Combat", col=ifelse(cy_mat_type == "Normal", 1, 2), pch=19)
+legend("topright", legend=c("Normal","Cancer"), col=1:2, pch=19)
+```
+

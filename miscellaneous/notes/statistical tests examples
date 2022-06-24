@@ -1,0 +1,65 @@
+- mut_matrix_rna ->  0 or 1 per gene per sample (absence or presence of gene mutations).
+- rna_mut -> RNA-Seq expression data that matches the mutation  matrix samples.
+
+** T Test **
+		Mut (0 or 1) || RNA-Seq
+		------------------------
+Sample1       0           53
+Sample2       0           305
+Sample3       1           100
+Sample4       1           75
+
+
+
+TBD
+		Cluster 1 || Cluster 2
+		-----------------------
+Sample1
+Sample2
+Sample3
+Sample4
+
+
+Cluster 1
+
+		 Clinical variable || RNA-Seq cluster 1
+		----------------------------------------
+Sample1         0                  53
+Sample2         0                  305
+Sample3         1                  100
+Sample4         1                  75
+
+Cluster 2
+
+		 Clinical variable || RNA-Seq cluster 1
+		----------------------------------------
+Sample1         0                  53
+Sample2         0                  305
+Sample3         1                  100
+Sample4         1                  75
+
+
+** Fisher test **
+- Code process:
+  1. We are in the column of the Gene 1 (where all the row values are the 0s and 1s of the samples)
+  2. We store the count of all the rows that:
+   - are 0 and in the cluster 1
+   - are 0 and in the cluster 2
+   - are 1 and in the cluster 1
+   - are 1 and in the cluster 1
+
+   We end up with a matrix that looks like this:
+   			Cluster 1 || Cluster 2
+   Mut         50          35
+   No mut      10          60      
+
+   Where all the numbers are actually frequencies.
+
+
+So, for clinical data we could have something like:
+
+            Cluster 1 || Cluster 2
+   White        50          35
+   No white     10          60   
+
+
