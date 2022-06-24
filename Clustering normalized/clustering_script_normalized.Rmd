@@ -19,8 +19,7 @@ options(stringsAsFactors = F)
 
 Primero leemos los datos clínicos.
 ```{r}
-brca_clin <- read.delim(file = "BRCA.clin.merged.txt", sep = "\t", header = F,
-row.names = 1, as.is = T)
+brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/BRCA.clin.merged.txt", sep = "\t", header = F, row.names = 1, as.is = T)
 ```
 
 Obtenemos los datos para los 3 receptores en los renglones 24, 29 y 1160.
@@ -44,7 +43,7 @@ tn_samples <- toupper(as.character(brca_clin[21,]))
 
 Leer datos de RNA-seq
 ```{r}
-f <- "BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
+f <- "C:/Users/victo/OneDrive/Documentos/R/TNBC research/TNBC_research/BRCA.rnaseqv2__illuminahiseq_rnaseqv2__unc_edu__Level_3__RSEM_genes_normalized__data.data.txt"
 brca_rnaseq <- read.delim(file = f, sep="\t", as.is=T, row.names = 1)
 brca_rnaseq <- data.matrix(brca_rnaseq[-1,])
 ```
@@ -87,6 +86,20 @@ brca_rnaseq_t <- t(brca_rnaseq) # Transpose of Rnaseq
 ```{r}
 brca_rnaseq_n <- log2(brca_rnaseq_t + 1)
 ```
+
+
+## Use ComBat results
+```{r}
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
+brca_rnaseq_n <- read.csv("ComBat/ComBat_db.csv", row.names = "row.names")
+```
+
+```{r}
+#MAD to filter genes and PCA
+cy_mat_combat_mad <- apply(brca_rnaseq_n, 1, mad)
+brca_rnaseq_n <- brca_rnaseq_n[which(cy_mat_combat_mad > 1),]
+```
+
 
 
 It's time to build the distance matrix. We use the euclidean distance method.
@@ -154,7 +167,6 @@ The first step is compute:
 brca_rnaseq_df <- as.data.frame(brca_rnaseq_n)
 
 x <- sweep(brca_rnaseq_df, 2, colMeans(brca_rnaseq_df))
-
 ```
 
 ### Filtering features
@@ -165,6 +177,7 @@ x <- as.matrix(x)
 sds <- colSds(x, na.rm = TRUE)
 o <- order(sds, decreasing = TRUE)[1:25]
 heatmap(x[1:100,o], col = RColorBrewer::brewer.pal(11, "Spectral"))
+
 ```
 
 
@@ -220,12 +233,12 @@ ind.coord <- as.data.frame(get_pca_ind(x)$coord)
 head(ind.coord)
 ```
 
-
 ```{r}
 kc <- kmeans(ind.coord, 3)
 
 plot(ind.coord[,1:2],col=factor(kc$cluster))
 ```
+
 ```{r}
 # Add clusters obtained using the K-means algorithm
 ind.coord$cluster <- factor(k$cluster)
