@@ -1,0 +1,469 @@
+---
+title: "Characterization of expresion data"
+author: "Victoria Rios"
+date: "4/16/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Importing the libraries
+options(stringsAsFactors=F)
+library(limma)
+library(sva)
+library(preprocessCore)
+```
+
+## Loading the TNBC datasets
+
+```{r}
+# Importing the datasets
+setwd("C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/")
+
+TCGA_db <- read.csv("TCGA/TCGA_TNBC_exprs.csv", row.names = "row.names")
+#TCGA_db <- as.data.frame(t(TCGA_db))
+#Ref1_db <- read.csv("GSE87049/TCGA_TNBC_exprs.csv") #NA (lacking of TNBC data)
+Ref2_db <- read.csv("Ref 2/Ref2_untar/brca_metabric/Ref2_TNBC_exprs.csv", row.names = "row.names")
+#Ref3_db <- read.csv("Ref 3/Ref3_untar/Ref3_TNBC_exprs.csv", row.names = "row.names")
+Ref4_db <- read.csv("Ref 4/Ref4_untar/brca_mbcproject_wagle_2017/Ref4_TNBC_exprs.csv", row.names = "row.names")
+RefGSE20271_db <- read.csv("GSE20271/GSE20271_TNBC_exprs.csv", row.names = "row.names")
+RefGSE575678_db <- read.csv("GSE575678/GSE75678_TNBC_exprs.csv", row.names = "row.names")
+```
+
+## Loading clinical data
+```{r}
+TCGA_clin <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\TCGA\\TCGA_TNBC_clinical_complete.csv", row.names = "row.names")
+TCGA_clin$source_db <- rep(x = "TCGA_RNAseq", times=nrow(TCGA_clin))
+
+#Ref1_db <- read.csv("GSE87049/TCGA_TNBC_exprs.csv") #NA (lacking of TNBC data)
+
+Ref2_clin <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\Ref 2\\Ref2_untar\\brca_metabric\\Ref2_TNBC_clinical_complete.csv", row.names = "row.names")
+Ref2_clin$source_db <- rep(x = "Ref2_RNAseq", times=nrow(Ref2_clin))
+Ref2_clin <- Ref2_clin[intersect(colnames(Ref2_db), rownames(Ref2_clin)),]
+
+#Ref3_clin <- read.csv("Ref 3/Ref3_untar/Ref3_TNBC_clinical.csv", row.names = "row.names")
+
+Ref4_clin <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\Ref 4\\Ref4_untar\\brca_mbcproject_wagle_2017\\Ref4_TNBC_clinical_complete.csv", row.names = "row.names")
+Ref4_clin$source_db <- rep(x = "Ref4_RNAseq", times=nrow(Ref4_clin))
+Ref4_clin <- Ref4_clin[intersect(colnames(Ref4_db), rownames(Ref4_clin)),]
+
+RefGSE20271_clin <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\GSE20271\\GSE20271_TNBC_clinical.csv", row.names = "row.names")
+RefGSE20271_clin$source_db <- rep(x = "RefGSE20271_Array", times=nrow(RefGSE20271_clin))
+
+RefGSE575678_clin <- read.csv("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\GSE575678\\GSE75678_TNBC_clinical_complete.csv", row.names = "row.names")
+RefGSE575678_clin$source_db <- rep(x = "RefGSE575678_Array", times=nrow(RefGSE575678_clin))
+```
+
+## PCA
+
+```{r}
+library(ggrepel)
+library(factoextra)
+
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+age <- as.factor(TCGA_clin$age)
+race <- as.factor(TCGA_clin$race)
+#treatment <- as.factor(TCGA_clin$treatment)
+#methastasis <- as.factor(sampleInfo$methastasis)
+
+pca <- prcomp(t(TCGA_db))
+
+## Join the PCs to the sample information
+fviz_pca_ind(pca, repel=T, col.ind=age, label="none")
+#fviz_pca_ind(pca, repel=T, col.ind=race, label="none")
+#fviz_pca_ind(pca, repel=T, col.ind=treatment, label="none")
+#fviz_pca_ind(pca, repel=T, col.ind=methastasis, label="none")
+```
+## AGE
+```{r}
+head(TCGA_clin)
+```
+### TCGA
+```{r}
+boxplot(TCGA_clin$age)
+```
+
+```{r}
+boxplot(RefGSE575678_clin$age)
+```
+
+## HISTOLOGICAL TYPE
+
+### TCGA
+```{r}
+table(TCGA_clin$histological_type)
+```
+
+### Ref2
+```{r}
+table(Ref2_clin$histological_type)
+```
+
+### Ref4
+```{r}
+table(Ref4_clin$histological_type)
+```
+
+### RefGSE20271
+```{r}
+table(RefGSE20271_clin$histological_type)
+```
+
+## HISTOLOGICAL GRADE
+
+### TCGA
+```{r}
+table(TCGA_clin$histological_stage)
+```
+
+### Ref2
+```{r}
+table(Ref2_clin$histological_grade)
+```
+
+### Ref4
+```{r}
+table(Ref4_clin$histological_grade)
+```
+
+### RefGSE20271
+```{r}
+table(RefGSE20271_clin$histological_grade)
+```
+
+### RefGSE575678
+```{r}
+table(RefGSE575678_clin$histological_grade)
+```
+
+
+## RACE
+
+### TCGA
+```{r}
+table(TCGA_clin$race)
+```
+
+### Ref2
+```{r}
+table(Ref2_clin$race)
+```
+
+### Ref4
+```{r}
+table(Ref4_clin$race)
+```
+
+### RefGSE20271
+```{r}
+table(RefGSE20271_clin$race)
+```
+
+### RefGSE575678
+```{r}
+table(RefGSE575678_clin$race)
+```
+
+
+## TREATMENT
+
+### TCGA
+```{r}
+table(TCGA_clin$treatment)
+```
+
+### Ref2
+```{r}
+table(Ref2_clin$treatment)
+```
+
+### Ref4
+```{r}
+table(Ref4_clin$treatment)
+```
+
+### RefGSE20271
+```{r}
+sum(table(RefGSE20271_clin$treatment))
+```
+
+### RefGSE575678
+```{r}
+table(RefGSE575678_clin$treatment)
+```
+
+
+## TUMOR SIZE
+
+### TCGA
+```{r}
+table(TCGA_clin$tumor_size)
+```
+
+### Ref2
+```{r}
+table(Ref2_clin$tumor_size_mm)
+```
+
+### Ref4
+```{r}
+table(Ref4_clin$tumor_size)
+```
+
+### RefGSE20271
+```{r}
+sum(table(RefGSE20271_clin$tumor_size))
+```
+
+### RefGSE575678
+```{r}
+table(RefGSE575678_clin$tumor_size_mm)
+```
+
+# COMBAT merged PCA
+``````{r}
+# TODO test this for gene intersection
+
+# NOTES:
+# > The databases not used for the resulting database could serve as validation
+# > si se duplican muestras, quedarnos con 
+# > Revisar los datos clínicos:
+#    * Lo que diferencía a los 
+
+# Revisar si los genes diferenciados son relevantes solamente para TNBC o para el cáncer en general o para el TNBC (pruebas estadísticas)
+#   - Cluster 1 vs Base de datos original N (TNBC y otros)
+#   - Plot: exprs Cluster A, Cluster B y otras DB originales
+
+# TODO: DB before combat subir a Drive{r}
+# TODO test this for gene intersection
+
+#Intersect datasets and normalization
+common_genes <- sort(intersect(intersect(intersect(rownames(Ref2_db), rownames(TCGA_db)), intersect(rownames(Ref4_db), rownames(RefGSE20271_db))),rownames(RefGSE575678_db)))
+
+cy_mat <- cbind(TCGA_db[common_genes,], Ref2_db[common_genes,], Ref4_db[common_genes,], RefGSE20271_db[common_genes,], RefGSE575678_db[common_genes,])
+cy_mat <- cy_mat[complete.cases(cy_mat),]
+
+cy_mat_genes <- row.names(cy_mat)
+cy_mat_samples <- colnames(cy_mat)
+cy_mat <- normalize.quantiles(as.matrix(cy_mat))
+
+cy_mat <- as.data.frame(cy_mat, row.names = cy_mat_genes)
+colnames(cy_mat) <- cy_mat_samples
+
+cy_mat = apply(cy_mat, 2, function(x) as.numeric(as.character(x)))
+
+#MAD to filter genes and PCA
+cy_mat_mad <- apply(cy_mat, 1, mad)
+cy_mat_mad[is.na(cy_mat_mad)] <- 0
+
+cy_mat_batch <- c(rep(1, ncol(TCGA_db)), rep(2, ncol(Ref2_db)), rep(3, ncol(Ref4_db)), rep(4, ncol(RefGSE20271_db)), rep(5, ncol(RefGSE575678_db)))
+cy_mat_pca <- prcomp(cy_mat[which(cy_mat_mad > 1),])
+
+#Combat
+modcombat <- model.matrix(~1, data=data.frame(cmb=cy_mat_batch))
+cy_mat_combat <- ComBat(dat=cy_mat, batch=cy_mat_batch, mod=modcombat, par.prior=TRUE, prior.plots=FALSE)
+rownames(cy_mat_combat) <- cy_mat_genes
+
+#MAD to filter genes and PCA
+cy_mat_combat_mad <- apply(cy_mat_combat, 1, mad)
+cy_mat_combat_pca <- prcomp(t(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+
+#Plot PCA before and after Combat
+setwd("C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring")
+
+#pdf("PCA_Before_Combat_3.pdf", width=9.2)
+par(mfrow=c(1,2))
+plot(cy_mat_pca$rotation[,1], cy_mat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Before Combat", col=cy_mat_batch, pch=19)
+legend(x=0.06, y=0.2, legend=c("TCGA", "Ref 2", "Ref 4","RefGSE20271_db","RefGSE575678_db"), col=c(1,2,3,4,5), pch=19)
+plot(cy_mat_combat_pca$rotation[,1], cy_mat_combat_pca$rotation[,2], xlab="PCA component 1", ylab="PCA component 2", main="Combat", col=cy_mat_batch, pch=19)
+legend(x=-0.006, y=0.125, legend=c("TCGA", "Ref 2", "Ref 4","RefGSE20271_db","RefGSE575678_db"), col=c(1,2,3,4,5), pch=19)
+#dev.off()
+
+```
+
+# Joining clinical datasets
+
+### TCGA
+```{r}
+head(TCGA_clin)
+```
+
+### Ref2
+```{r}
+head(Ref2_clin)
+```
+
+### Ref4
+```{r}
+head(Ref4_clin)
+```
+
+### RefGSE20271
+```{r}
+head(RefGSE20271_clin)
+```
+
+### RefGSE575678
+```{r}
+head(RefGSE575678_clin)
+```
+
+
+## merging
+
+First, we need to clean the datasets to ensure matching
+```{r}
+# Renaming a column
+colnames(TCGA_clin)[12] <- "histological_grade"
+colnames(TCGA_clin)
+```
+
+
+```{r}
+class(TCGA_clin$histological_grade) = "character"
+class(Ref2_clin$histological_grade) = "character"
+class(Ref4_clin$histological_grade) = "character"
+class(RefGSE20271_clin$histological_grade) = "character"
+class(RefGSE575678_clin$histological_grade) = "character"
+
+class(TCGA_clin$age) = "character"
+class(Ref2_clin$age) = "character"
+class(Ref4_clin$age) = "character"
+class(RefGSE20271_clin$age) = "character"
+class(RefGSE575678_clin$age) = "character"
+
+class(Ref2_clin$tumor_stage) = "character"
+class(Ref4_clin$tumor_stage) = "character"
+```
+
+Merging the datasets
+```{r}
+
+2
+library(dplyr)
+combo = bind_rows(TCGA_clin, Ref2_clin, Ref4_clin, RefGSE20271_clin, RefGSE575678_clin)
+combo <- filter(combo, rownames(combo) %in% cy_mat_samples)
+head(combo)
+```
+
+# Plotting merged PCA
+
+```{r}
+library(plyr)
+
+combo$histological_grade <- mapvalues(combo$histological_grade, c("stage i", "stage ia", "stage iv", "stage iia", "stage iib", "II INTERMEDIATE GRADE (MODERATELY DIFFERENTIATED)", "stage ii", "stage iiic", "III HIGH GRADE (POORLY DIFFERENTIATED)", "stage iiia", "stage iiib", "yes", "no", "N/A"), c("1", "1", "1", "2", "2", "2", "2", "3", "3", "3", "3", "Unknown", "Unknown", "Unknown"))
+
+unique(combo$histological_grade)
+```
+
+```{r}
+library(plyr)
+
+combo$histological_type <-
+  mapvalues(
+    combo$histological_type,
+    c(
+      "infiltrating ductal carcinoma",
+      "medullary carcinoma",
+      "Breast Invasive Lobular Carcinoma",
+      "Breast Mixed Ductal and Lobular Carcinoma",
+      "Infiltrating Lobular Carcinoma",
+      "IDC/ILC",
+      "metaplastic carcinoma",
+      "Breast Invasive Ductal Carcinoma",
+      "Breast Invasive Mixed Mucinous Carcinoma",
+      "mixed histology (please specify)",
+      "Infiltrating Ductal Carcinoma",
+      "IDC",
+      "infiltrating lobular carcinoma",
+      "Breast Invasive Cancer, NOS",
+      "Breast",
+      "other, specify",
+      "Mixed",
+      "Other",
+      "Medullary",
+      "Ductal/NST"
+    ),
+    c(
+      "Ductal",
+      "Medular",
+      "Lobular",
+      "Ductal and Lobular",
+      "Lobular",
+      "Ductal and Lobular",
+      "Metaplastic",
+      "Ductal",
+      "Mixed (not specified)",
+      "Mixed (not specified)",
+      "Ductal",
+      "Ductal",
+      "Lobular",
+      "Not specified",
+      "Not specified",
+      "Not specified",
+      "Mixed (not specified)",
+      "Not specified",
+      "Medular",
+      "Ductal"
+    )
+  )
+
+unique(combo$histological_type)
+```
+
+```{r}
+library(ggrepel)
+library(factoextra)
+
+## MAKE SURE TO TRANSPOSE THE EXPRESSION MATRIX
+# TODO: PCA with the 1500 - 2000 most variable (std or MAD (median absolute deviation)), más diferentes
+#eset_TNBC_mad_ordered <- keep_most_different_genes(eset_TNBC, method="mad")[1:2000,]
+
+#MAD to filter genes and PCA
+cy_mat_combat_mad <- apply(cy_mat_combat, 1, mad)
+cy_mat_combat_pca <- prcomp(t(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+
+combo_combat <- filter(combo, rownames(combo) %in% colnames(cy_mat_combat[which(cy_mat_combat_mad > 1),]))
+histological_type <- as.factor(combo_combat$histological_type)
+histological_grade <- as.factor(combo_combat$histological_grade)
+age <- as.factor(combo_combat$age)
+tumor_size <- as.factor(combo_combat$tumor_size_mm)
+source_db <- as.factor(combo_combat$source_db)
+#treatment <- as.factor(sampleInfo$treatment)
+#methastasis <- as.factor(sampleInfo$methastasis)
+
+## Join the PCs to the sample information
+fviz_pca_ind(cy_mat_combat_pca, repel=T, col.ind=histological_type, label="none")
+fviz_pca_ind(cy_mat_combat_pca, repel=T, col.ind=histological_grade, label="none")
+fviz_pca_ind(cy_mat_combat_pca, repel=T, col.ind=age, label="none")
+fviz_pca_ind(cy_mat_combat_pca, repel=T, col.ind=tumor_size, label="none")
+fviz_pca_ind(cy_mat_combat_pca, repel=T, col.ind=source_db, label="none")
+#fviz_pca_ind(pca, repel=T, col.ind=treatment, label="none")
+#fviz_pca_ind(pca, repel=T, col.ind=methastasis, label="none")
+```
+
+```{r}
+library(readr)
+# store rownames in new column
+combo_combat<- as.data.frame(combo_combat)
+combo_combat$row.names <- row.names(combo_combat)
+
+cy_mat_combat<- as.data.frame(cy_mat_combat)
+cy_mat_combat$row.names <- row.names(cy_mat_combat)
+
+cy_mat_combat_mad<- as.data.frame(cy_mat_combat_mad)
+cy_mat_combat_mad$row.names <- row.names(cy_mat_combat_mad)
+
+combo<- as.data.frame(combo)
+combo$row.names <- row.names(combo)
+
+setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clinical_data_comparison")
+write_csv(x = combo_combat, file="clinical_data_combat_mad.csv")
+write_csv(x = combo, file="clinical_data_combat.csv")
+write_csv(x = cy_mat_combat, file="exprs_data_combat.csv")
+write_csv(x = cy_mat_combat_mad, file="exprs_data_combat_mad.csv")
+```
+
