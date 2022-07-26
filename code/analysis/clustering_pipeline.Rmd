@@ -27,29 +27,18 @@ library(plyr)
 
 Import ComBat resulting data frame containing gene expression information (previously normalized and batch effect assessed), where each column is a sample and each row a gene.
 ```{r}
-# Change the working directory to the folder where the the file lives
-setwd("C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring")
-
 # Read the csv file
-train <- read.csv("ComBat/ComBat.csv", row.names = "row.names")
-train_mad <- read.csv("ComBat/ComBat_mad.csv", row.names = "row.names")
-
-# TODO Delete after quick test
-#test <- read.csv("ComBat/ComBat_test.csv", row.names = "row.names")
+train <- read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat.csv", row.names = "row.names")
+train_mad <- read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat_mad.csv", row.names = "row.names")
 ```
 
 ### Clinical information
 
 Import ComBat compliant clinical information that matches with the samples found in the genetic information data frame.
 ```{r}
-# Change the working directory to the folder where the the file lives
-setwd(
-  "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clinical_data_comparison"
-)
-
 # Read the csv file with the clinical information
 combo_combat_mad <-
-  read.csv("clinical_data_combat_mad.csv", row.names = "row.names")
+  read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/clinical_data_combat_mad.csv", row.names = "row.names")
 RNA_clin_data <- combo_combat_mad
 ```
 
@@ -291,17 +280,13 @@ t(train)[0:10,0:10]
 
 ```{r}
 # Principal components analysis
-#x_train <- prcomp(t(train), scale = TRUE)
-x_train <- prcomp(t(train_mad), scale = TRUE)
+x_train <- prcomp(t(train_mad), scale = T)
 ```
 
 Visualize eigenvalues (scree plot) to show the percentage of variances explained by each principal component.
 ```{r}
 scree_plot <- fviz_eig(x_train)
 scree_plot
-
-# TODO Delete after quick test
-# fviz_eig(x_test)
 ```
 As seen in the plot, we can explain most
 
@@ -310,10 +295,6 @@ Re-labeling the patients IDs
 # We check that the patient ID doesn't repeat
 temp_train <- table(x_train[["x"]])
 isTRUE(any(temp_train > 1)) # if the result is FALSE, they appear only once
-
-# TODO remove
-#temp_test <- table(x_test[["x"]])
-#isTRUE(any(temp_test > 1)) # if the result is FALSE, they appear only once
 ```
 We save the original IDs in another list inside of x
 ```{r}
@@ -325,12 +306,6 @@ IDs_train <-
   cbind(orig_IDs_train, short_IDs_train) # we bind them in the same matrix
 x_train[["IDs"]] <-
   IDs_train # We append the new IDs matrix to the x list
-
-# TODO Remove
-#orig_IDs_test <- matrix(row.names(x_test[["x"]]), ncol = 1) # we store the original IDs
-#short_IDs_test <- as.character(matrix(data = 1:nrow(x_test[["x"]]), ncol = 1)) # we store the short IDs
-#IDs_test <- cbind(orig_IDs_test, short_IDs_test) # we bind them in the same matrix
-#x_test[["IDs"]] <- IDs_test # We append the new IDs matrix to the x list
 ```
 
 We proceed to assign a unique number to each patient
@@ -380,6 +355,7 @@ plot(
 ```
 We can see that there isn't an apparent difference in the data explained by the first 6 components with the highest explained variance, so, we'll proceed with the analysis of the first two PCs.
 
+https://rpubs.com/Bury/ClusteringOnPcaResults 
 
 ## Consensus Clustering------------------------------------------------------
 
@@ -390,37 +366,33 @@ Genome-wide expression data is used to stratify patients into classes using clus
 # Extract coordinates of individuals from the PCA result
 ind.coord_train <- as.data.frame(get_pca_ind(x_train)$coord)
 
-# TODO remove
-#ind.coord_test <- as.data.frame(get_pca_ind(x_test)$coord)
-
 ind.coord_train[0:10,0:10]
 ```
 
 Performing the consensus clustering on the normalized data
 ```{r}
+library(dplyr)
+
+x_train[["x"]] <- mutate_all(as.data.frame(x_train[["x"]]), function(x) as.numeric(as.character(x)))
+
 # We pass the gene expression data frame to perform consensus clustering
-res_train <- M3C(train_mad,
+res_train <- M3C(x_train[["x"]],
                  removeplots = TRUE,
-                 iters = 10,
-                 objective ='PAC',
+                 iters = 50,
                  fsize = 8,
                  lthick = 1,
                  dotsize = 1.25)
 
 optimal_k_pac_train = max(res_train[["assignments"]]);
-
-#TODO Remove
-#res_test <- M3C(t(test), removeplots = TRUE, iters=3, objective='PAC', fsize=8, lthick=1, dotsize=1.25)
-#optimal_k_pac_test = max(res_test[["assignments"]]);
 ```
 
 (Optional) Save the result of consensus clustering for later
 ```{r}
 # Save the result object to a local file
-#saveRDS(res_train,
-#        file = "consensus_clustering_res_final.rds")
+saveRDS(res_train,
+        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
 # Restore the object
-res_train <- readRDS(file = "consensus_clustering_res_final.rds")
+res_train <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
 ```
 
 ### Checking the scores
@@ -522,7 +494,7 @@ RNA_seq_merged <-
 
 RNA_seq_merged_allgenes <-
   as.data.frame(t(rbind(
-    train, t(RNA_seq_cluster_annotation)
+    train_mad, t(RNA_seq_cluster_annotation)
   )))
 
 # Clinical data
@@ -541,12 +513,6 @@ annon_train <-
   res_train$realdataresults[[k_clusters_train]]$ordered_annotation
 ccmatrix_train <-
   res_train$realdataresults[[k_clusters_train]]$consensus_matrix
-
-# TODO Remove
-#data_test <- res_test$realdataresults[[k_clusters_test]]$ordered_data
-#annon_test <- res_test$realdataresults[[k_clusters_test]]$ordered_annotation  
-#ccmatrix_test <- res_test$realdataresults[[k_clusters_test]]$consensus_matrix
-#head(annon)
 ```
 
 Consensus matrix heatmaps from M3C output with ComplexHeatmap.
@@ -623,27 +589,29 @@ From looking at the heatmap, we can discard that the clustering was biased by th
 **K-means clustering**
 We proceed to apply a K-means clustering procedure on the PCA selected components (in this case, Dim 1 and Dim 2).
 ```{r}
-k_train <- kmeans(ind.coord_train,
+k_train <- kmeans(x_train[["x"]][,1:2],
                   centers = 2)
 ```
 
 We plot the resulting clusters
 ```{r}
 # Add clusters obtained using the K-means algorithm
-ind.coord_train$cluster <- factor(k_train$cluster)
+x_train$cluster <- factor(k_train$cluster)
 eigenvalue <- round(get_eigenvalue(x_train), 1)
 variance.percent_train <- eigenvalue$variance.percent
 ```
 
 ```{r}
 library(ggpubr)
+library(dplyr)
 
+temp <- do.call("cbind", list(x_train[["x"]],as.data.frame(x_train$cluster)))
 
 ggscatter(
-  ind.coord_train,
-  x = "Dim.1",
-  y = "Dim.2",
-  color = "cluster",
+  temp,
+  x = "PC1",
+  y = "PC2",
+  color = "x_train$cluster",
   palette = "npg",
   ellipse = TRUE,
   ellipse.type = "convex",
@@ -653,7 +621,7 @@ ggscatter(
   xlab = paste0("Dim 1 (", variance.percent_train[1], "% )"),
   ylab = paste0("Dim 2 (", variance.percent_train[2], "% )")
 ) +
-  stat_mean(aes(color = cluster), size = 4)
+  stat_mean(aes(color = `x_train$cluster`), size = 4)
 ```
 
 ```{r}
@@ -662,19 +630,19 @@ library(factoextra)
 library(ggpubr)
 
 histological_type <- as.factor(RNA_clin_data$histological_type)
-ind.coord_train$histological_type <- histological_type
+temp$histological_type <- histological_type
 
 histological_grade <- as.factor(RNA_clin_data$histological_grade)
-ind.coord_train$histological_grade <- histological_grade
+temp$histological_grade <- histological_grade
 
 source_db <- as.factor(RNA_clin_data$source_db)
-ind.coord_train$source_db <- source_db
+temp$source_db <- source_db
 
 
 ggscatter(
-  ind.coord_train,
-  x = "Dim.1",
-  y = "Dim.2",
+  temp,
+  x = "PC1",
+  y = "PC2",
   palette = "npg",
   ellipse = TRUE,
   ellipse.type = "convex",
@@ -691,7 +659,7 @@ By looking at the previous plot, we confirm (once again), that the clustering wa
 ## Consensus Clustering (second method: NMF)---------------------------------
 ```{r}
 options(stringsAsFactors=F)
-source("nmfconsensus.R")
+source("~/TNBC_Research/code/analysis/nmfconsensus.R")
 
 train_mad_combat_nmf <- t(apply(train_mad, 1, scale))
 colnames(train_mad_combat_nmf) <- colnames(train_mad)
@@ -712,7 +680,7 @@ nmfconsensus(
 ```
 
 ```{r}
-dat.gct <- as.data.frame(read.delim(file="C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clustering\\neu_nmfconsensus.k.2.gct"))
+dat.gct <- as.data.frame(read.delim(file="~/TNBC_research/code/csv_and_objects/neu_nmf_results/neu_nmfconsensus.k.2.gct"))
 nmf_temp <- as.data.frame(dat.gct[,-1])
 colnames(nmf_temp) <- c("nmf_cluster")
 rownames(nmf_temp) <- dat.gct[,1]
@@ -740,6 +708,58 @@ res_df[which(res_df$nmf_cluster != res_df$`ind.coord_train$cluster`),]
 ```
 In total, there were 42 mismatches of cluster assignations out of 498, (92% clustering similarity between both methods)
 
+## HDBSCAN Clustering ---------------------------------
+
+```{r}
+# importing the library
+library("dbscan")
+```
+
+To run the HDBSCAN algorithm, simply pass the dataset and the (single) parameter value ‘minPts’ to the hdbscan function.
+```{r}
+cl <- hdbscan(temp[,1:2], minPts = 4)
+cl
+```
+
+```{r}
+plot(temp[,1:2], col=cl$cluster+1, pch=20)
+```
+
+```{r}
+plot(temp[,1:2], col=cl$cluster+1, pch=21)
+colors <- mapply(function(col, i) adjustcolor(col, alpha.f = cl$membership_prob[i]), 
+                 palette()[cl$cluster+1], seq_along(cl$cluster))
+points(temp[,1:2], col=colors, pch=20)
+```
+
+```{r}
+plot(cl)
+```
+
+```{r}
+plot(cl$hc, main="HDBSCAN* Hierarchy", )
+```
+
+####
+Let's compare with the consensus clustering results
+```{r}
+consensus_res <- as.data.frame(ind.coord_train$cluster)
+rownames(consensus_res) <- rownames(ind.coord_train)
+class(consensus_res$`ind.coord_train$cluster`) <- "Numeric"
+consensus_res
+```
+
+Find intersections
+```{r}
+res_df <- merge(nmf_temp, consensus_res, by=0, all=TRUE)
+res_df
+```
+
+Find the different cluster assignations
+```{r}
+res_df[which(res_df$nmf_cluster != res_df$`ind.coord_train$cluster`),]
+```
+In total, there were 42 mismatches of cluster assignations out of 498, (92% clustering similarity between both methods)
 
 ## Clinical data visualization per cluster-----------------------------------
 

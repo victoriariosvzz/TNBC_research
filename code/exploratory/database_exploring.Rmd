@@ -25,298 +25,22 @@ library(affyio)
 ```
 
 ## GEO Datasets
-### Ref 1. GSE87049 (Subseries GSE75678)
-```{r}
-# We untar the file
-untar(tarfile = "./TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_RAW.tar", exdir = "../TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar")
-```
-
-```{r}
-# specify the path on your computer where the folder that contains the CEL-files is located
-celpath = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 1/GSE87049/GSE87049_untar"
-```
-
-```{r}
-read.celfile.header <- function(filename,info=c("basic","full"),verbose=FALSE){
-  compress <- FALSE
-
-  info <- match.arg(info)
-
-  if (info == "basic"){
-    if (verbose)
-      cat("Reading", filename, "to get header information.\n")
-    headdetails <- .Call("ReadHeader", filename, PACKAGE="affyio")
-    names(headdetails) <- c("cdfName","CEL dimensions")
-    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
-  } else {
-    if (verbose)
-      cat("Reading", filename, "to get full header information.\n")
-    ### full returns greater detailed information from the header. Exact details differ depending on the file format.
-    headdetails <- try(.Call("ReadHeaderDetailed", filename, PACKAGE="affyio"))
-    if (is(headdetails, "try-error"))
-        stop("Failed to get full header information for ", filename)
-    names(headdetails) <- c("cdfName","CEL dimensions","GridCornerUL","GridCornerUR","GridCornerLR","GridCornerLL","DatHeader","Algorithm","AlgorithmParameters","ScanDate")
-    names(headdetails$"CEL dimensions") <- c("Cols", "Rows")
-    
-
-    if (nchar(headdetails$ScanDate) == 0){
-      # try to extract it from the DatHeader
-      DatHeaderSplit <- strsplit(headdetails$DatHeader," ")
-      Which.Date <- grep("[0-9]*/[0-9]*/[0-9]*",DatHeaderSplit[[1]])
-      Which.Time <-  grep("[0-9]*:[0-9]*:[0-9]*",DatHeaderSplit[[1]])
-      headdetails$ScanDate <- paste(DatHeaderSplit[[1]][Which.Date],DatHeaderSplit[[1]][Which.Time])
-    }
-  }
-  return(headdetails)
-}
-
-```
-
-
-```{r}
-## import CEL files containing raw probe-level data into an R
-# Check the chip type of the bunch of CEL files
-list = list.files(celpath, full.names=TRUE, pattern = "CEL.gz")
-length(list)
-#table(sapply(list, function(x) read.celfile.header(x)$cdfName))
-```
-
-We should use the following packages to read different types of chip types:
--  oligo >> for newer arrays (if you work with newer arrays (HTA, Gene ST...))
--  affy >> for older arrays  (3' arrays)
-
-```{r}
-# We separate the CEL files in different batches according to their chip type (to read them separately)
-ff <- split(list, sapply(list, function(x) read.celfile.header(x)$cdfName))
-summary(ff)
-```
-
-We proceed to read the cel files and store them into an AffyBatch object
-```{r}
-data_SNP = read.celfiles(ff$GenomeWideSNP_6[0:50])
-data_HuGene = read.celfiles(ff$`HuGene-1_0-st-v1`)
-```
-
-```{r}
-# TODO: Correo a Profa. Nayeli para solicitar zoom
-# 1. Map Gene Symbols and generate the database
-# 2. Combat
-# 3. Visualization
-```
-
-
-**Slots of the AffyBatch explained**
-cdfName:
-Object of class character representing the name of CDF file associated with the arrays in the AffyBatch.
-
-nrow:
-Object of class integer representing the physical number of rows in the arrays.
-
-ncol:
-Object of class integer representing the physical number of columns in the arrays.
-
-assayData:
-Object of class AssayData containing the raw data, which will be at minimum a matrix of intensity values. This slot can also hold a matrix of standard errors if the 'sd' argument is set to TRUE in the call to ReadAffy.
-
-phenoData:
-Object of class AnnotatedDataFrame containing phenotypic data for the samples.
-
-annotation
-A character string identifying the annotation that may be used for the ExpressionSet instance.
-
-protocolData:
-Object of class AnnotatedDataFrame containing protocol data for the samples.
-
-featureData
-Object of class AnnotatedDataFrame containing feature-level (e.g., probeset-level) information.
-
-experimentData:
-Object of class "MIAME" containing experiment-level information.
-
-.__classVersion__:
-Object of class Versions describing the R and Biobase version number used to create the instance. Intended for developer use.
-
-Retrieving intensities of each AffyBatch object generated from the CEL files.
-```{r}
-expr_SNP <- oligo::exprs(data_SNP)
-expr_HuGene <- oligo::exprs(data_HuGene)
-```
-
-Checking the first 3 rows
-```{r}
-expr_SNP[1:3,]
-expr_HuGene[1:3,]
-```
-
-**Key COncept**
-Each gene or portion of a gene is represented by 11 to 20 oligonucleotides of 25 base-pairs.
-
-Perfect match
-(PM): A 25-mer complementary to a reference 
-sequence of interest (e.g., part of a gene)
-
-Since we will only work with PM probes, we might want to look at the intensities of the PM probes only using the pm() method.
-
-*Note about pm() and exprs() methods:*
-pm() reorders the rows while exprs() and intensity() retrieve the intensities of the probes in the original order (as they occur in the CEL files). 
-```{r}
-#The command below will retrieve the PM intensities of the first 5 rows of the data set.
-
-# TODO data_SNP cannot be allocated to run this method
-#oligo::pm(data_SNP)[1:5,] 
-oligo::pm(data_HuGene)[1:2,]
-
-```
-pm() returns probe numbers (column at the left). These probe numbers refer to the original order of the probes. e.g.
-```{r}
-# We can use this probe number to check if exprs() and pm() return the same values.
-expr_HuGene[1056,1:3]
-oligo::pm(data_HuGene)[1,1:3]
-
-```
-The first column of pm(data) contains *probe numbers* not *probe set IDs* !
-
-It is much more useful to retrieve intensities based on probe set ID then on location in the CEL file. Often we'll want to retrieve the data of all the probes in the probe set that represents our favourite gene.
-```{r}
-oligo::probeNames(data_HuGene)
-```
-
-We can ask for the intensity of all PM probes of a probe set using the probe set ID, e.g. for probe set ID 245027_at
-```{r}
-
-oligo::pm(data_HuGene,"7981326")[1:5,]
-
-```
-
-To plot the intensities of all the probes of a probe set, we will use ggplot().
-```{r}
-probeNrs = rep(rownames(pm(data_HuGene,"7981326")),6)
-ints=c(pm(data_HuGene,"7981326")[,1],pm(data_HuGene,"7981326")[,2],pm(data_HuGene,"7981326")[,3],pm(data_HuGene,"7981326")[,4],pm(data_HuGene,"7981326")[,5],pm(data_HuGene,"7981326")[,6])
-```
-Now we will combine the vector with the probe IDs and the vector with the intensities into a data frame (= matrix in which columns contain data of different types: numbers, text, boolean...). The data frame contains two columns: one is called probeNrs and one is called ints.
-```{r}
-library(ggplot2)
-pset = data.frame(probeNrs=probeNrs,ints=ints)
-pset$PNs = factor(pset$probeNrs)
-scatter = ggplot2::ggplot(pset,aes(PNs,ints))
-scatter + geom_point() + labs(x="Probe Number",y="Intensity of PM probe")
-```
-
-**Retrieving sample annotation using affy**
-Apart from the expression data itself, microarray data sets need to include information about the samples that were hybridized to the arrays, e.g. sample labels. AffyBatch objects have several slots (characteristics). One of them is called phenoData. It contains labels for the samples. Despite the name, there is no implication that the labels should be phenotypic, in fact they often indicate genotypes such as wild-type or knockout. They can also contain other types of information about the samples e.g. which samples are replicates, which samples were scanned by the same scanner, the amount of RNA that was hybridized to the arrays…
-However, for most data sets the phenoData has not been defined.
-```{r}
-ph = data_HuGene@phenoData
-ph #ph is a dataframe
-```
-We find the names of the columns in varLabels: there is one column named sample.To look at all the data in the data frame ask for the data slot.
-```{r}
-ph@data
-```
-
-If phenoData contains no information: CEL-files are given an index 1-n (n = total number of files). You can give the samples more accurate names so these can be used in the plots that we are going to create later on. We will see how to do this when we create the plots.
-
-**Retrieving probe anotation**
-Microarray data sets should include information on the probes. AffyBatches have a slot called featureData, a data frame that contains labels for the probes. For most data sets (also public data coming from GEO or ArrayExpress) the featureData has not been defined.
-```{r}
-feat = data_HuGene@featureData
-feat
-feat@data
-```
-
-**Retrieving experiment annotation**
-Microarray data sets should also include information on the experiment. AffyBatches have a slot for this called experimentData. For most data sets (also public data coming from GEO or ArrayExpress) the featureData has not been defined.
-```{r}
-exp = data_HuGene@experimentData
-exp
-```
-To retrieve the IDs of the probe sets that are represented on the arrays 
-```{r}
-featureNames(data_HuGene)
-```
-**Creating microarray pictures**
-For each array (sample) we will generate a figure containing the image of that array. The sample names that were specified in the phenoData are indeed used as labels in the figure.
-```{r}
-## To display the images in R-------
-op = par(mfrow = c(2,3))
-for (i in 10:16){image(data_HuGene[,i],main=ph@data$sample[i])}
-
-## To save the images in path-------
-# for (i in 1:6)
-# {
-# name = paste("image",i,".jpg",sep="")
-# jpeg(name)
-# image(data_HuGene[,i],main=ph@data$sample[i])
-# dev.off()
-# }
-```
-
-**MA Plots per array (sample)**
-Ideally, the cloud of data points should be centered around M=0 (blue line). This is because we assume that the majority of the genes is not DE and that the number of upregulated genes is similar to the number of downregulated genes. Additionally, the variability of the M values should be similar for different A values (average intensities). You see that the spread of the cloud increases with the average intensity: the loess curve (red line) moves further and further away from M=0 when A increases. To remove (some of) this dependency, we will normalize the data.
-
-```{r}
-op = par(mfrow = c(2,3))
-
-# MA plot not normalized
-for (i in 1:3){MAplot(rma(data_HuGene[,1:20]),which=i)}
-
-# MA plot normalized
-for (i in 1:3){MAplot(rma(data_HuGene[,1:20]),which=i)}
-```
-**Identification of DE genes (differentially expressed)**
-Identification of DE genes is not done by the affy nor the oligo package but by the limma package. Limma uses the output of the rma() method (data.rma) as input. Since the output of the rma() method is the same in the affy and in the oligo package, limma works well with both packages. This means that all following code is valid for all normalized Affymetrix data regardless of the package that was used for normalization.
-
-The limma package contains functions for using a t-test or an ANOVA to identify differential expression in microarray data. These functions can be used for all array platforms and work even for microarray data with complex designs of multiple samples. The central idea is to fit a linear model to the expression data of each gene. The expression data can be log-ratios or log-intensities. Computational methods are used to borrow information across genes making the analyses stable even for experiments with a small number of arrays. Limma is designed to be used in conjunction with the affy package.
-
-```{r}
-library(gcrma)
-library(hgu133a2frmavecs) #cdfname="HGU133A_HS_ENTREZG"
-```
-
-```{r}
-
-#Set CDF to use
-cdf="HGU133A_HS_ENTREZG"
-
-#Read in the raw data from specified dir of CEL files
-raw.data.ALL=ReadAffy(verbose=TRUE, celfile.path=celpath, cdfname=cdf)
-
-#perform GCRMA normalization
-data.gcrma.norm.ALL=gcrma(raw.data.ALL)
-
-#Get the important stuff out of the data - the expression estimates for each array
-gcrma.ALL=exprs(data.gcrma.norm.ALL)
-
-#Remove control probes
-gcrma.ALL=gcrma.ALL[1:12065,] #Remove Affy control probes, custom CDF
-
-#Format values to 5 decimal places
-gcrma.ALL=format(gcrma.ALL, digits=5)
-
-#Map probes to gene symbols
-#To see all mappings for Entrez gene db associated with customCDF
-ls("package:hgu133ahsentrezg.db") #customCDF
-
-#Extract probe ids, entrez symbols, and entrez ids
-probes.ALL=row.names(gcrma.ALL)
-symbol.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgSYMBOL))
-ID.ALL = unlist(mget(probes.ALL, hgu133ahsentrezgENTREZID))
-
-#Combine gene annotations with raw data
-gcrma.ALL=cbind(probes.ALL,ID.ALL,symbol.ALL,gcrma.ALL)
-
-#Write GCRMA-normalized, mapped data to file
-write.table(gcrma.ALL, file = "ALL_gcrma.txt", quote = FALSE, sep = "\t", row.names = FALSE, col.names = TRUE)
-```
-
-
 ### Ref 1. GSE87049 (Subseries GSE75678) using series_matrix.txt file
 ```{r}
 library("GEOquery")
 ```
 
 ```{r}
-gse=getGEO(filename="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE75678_series_matrix.txt.gz", getGPL = T)
+getwd()
+setwd("C:/Users/victo/OneDrive/Documentos/TNBC_research")
+getwd()
+```
+
+
+```{r}
+setwd("~/TNBC_research")
+file_path = "./data/db_files/GSE575678/GSE75678_series_matrix.txt.gz"
+gse=getGEO(filename=file_path, getGPL = T)
 ```
 
 ```{r}
@@ -513,7 +237,7 @@ We can export the expression data to a csv for inspection in Excel using the wri
 ```{r}
 library(readr)
 full_output <- cbind(fData(gse),exprs(gse))
-write_csv(full_output, file="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE75678_clean.csv")
+write_csv(full_output, file="~/TNBC_research/code/exploratory/GSE75678_clean.csv")
 ```
 
 The annotation from GEO might contain lots of columns that we are not particularly interested in. To keep the data tidier we can use the select function to only print particular columns in the output.
@@ -531,7 +255,7 @@ features <- fData(gse)
 features <- select(features, ID, GENE_SYMBOL)
 full_output <- cbind(features,exprs(gse))
 #full_output <- as.data.frame(exprs(gse))
-write_csv(full_output, path="C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/GSE575678/GSE575678_clean_with_IDs_only.csv")
+write_csv(full_output, path="~/TNBC_research/code/exploratory/GSE575678_clean_with_IDs_only.csv")
 ```
 
 #### Differential Expression
