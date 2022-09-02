@@ -1,7 +1,7 @@
 ---
 title: "TNBC Clustering (Gene expression, mutations, clinical data)"
 author: "Victoria Rios"
-date: "30/04/2022"
+date: "30/08/2022"
 output:
   pdf_document: default
   html_document: default
@@ -12,9 +12,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 # Data Analysis of TNBC gene expression information and mutations
-## Data Pre-processing-------------------------------------------------------
 
-We avoid strings being recognized as factors
+***
+
+## Data Importing
+
+Avoid strings being recognized as factors and import libraries used in the next chunks of code.
 ```{r}
 options(stringsAsFactors = F)
 
@@ -25,312 +28,297 @@ library(plyr)
 
 ### Expression data
 
-Import ComBat resulting data frame containing gene expression information (previously normalized and batch effect assessed), where each column is a sample and each row a gene.
+Import resulting dataframes containing gene expression data (previously normalized with log2 and batch effect assessed by ComBat), where each column is a sample and each row a gene.
+
+characteristic      | train | train_mad 
+rows (genes)        | 10856 | 2648   
+columns (samples)   | 509   | 509
+
 ```{r}
-# Read the csv file
-train <- read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat.csv", row.names = "row.names")
-train_mad <- read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat_mad.csv", row.names = "row.names")
+# Read the csv files containing the dataframes
+train <-
+  read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat.csv",
+           row.names = "row.names")
+train_mad <-
+  read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat_mad.csv",
+           row.names = "row.names")
 ```
 
-### Clinical information
+Observe the first records of the gene expression dataframe
+```{r}
+head(train_mad)
+```
 
-Import ComBat compliant clinical information that matches with the samples found in the genetic information data frame.
+
+### Clinical data
+
+Import the clinical information dataframe that matches with the samples found in the genetic information dataframe imported in the previous chunks of code (specifically "train_mad" dataframe).
 ```{r}
 # Read the csv file with the clinical information
-combo_combat_mad <-
-  read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/clinical_data_combat_mad.csv", row.names = "row.names")
-RNA_clin_data <- combo_combat_mad
-```
-
-Make the categorical variables' values compliant
-
-**Histological type---**
-Checking the unique values of that clinical variable
-```{r}
-unique(RNA_clin_data$histological_type)
-```
-
-Mapping the values that need to be compliant
-```{r}
-RNA_clin_data$histological_type <-
-  mapvalues(RNA_clin_data$histological_type,
-            c("Mixed (not specified)"),
-            c("Mixed"))
-
-# Verify the changes have been made
-unique(RNA_clin_data$histological_type)
-```
-
-**Histological grade---**
-Checking the unique values of that clinical variable
-```{r}
-unique(RNA_clin_data$histological_grade)
-```
-
-Mapping the values that need to be compliant
-```{r}
-RNA_clin_data$histological_grade <-
-  mapvalues(RNA_clin_data$histological_grade,
-            c("UNKNOWN", "N/A", "Unknown", "II-III", "I LOW GRADE (WELL DIFFERENTIATED)"),
-            c(NA, NA, NA, "2", "1"))
-
-unique(RNA_clin_data$histological_grade)
-```
-
-**Race---**
-Checking the unique values of that clinical variable
-```{r}
-unique(RNA_clin_data$race)
-```
-
-Mapping the values that need to be compliant
-```{r}
-RNA_clin_data$race <-
-  mapvalues(
-    RNA_clin_data$race,
-    c(
-      "W",
-      "B",
-      "H",
-      "UNKNOWN",
-      "WHITE",
-      "BLACK OR AFRICAN AMERICAN",
-      "OTHER"
-    ),
-    c(
-      "white",
-      "african american",
-      "hispanic or latino",
-      NA,
-      "white",
-      "african american",
-      NA
-      
-      
-    )
+RNA_clin_data <-
+  read.csv(
+    "~/TNBC_Research/code/csv_and_objects/ComBat/clinical_data_combat_mad.csv",
+    row.names = "row.names"
   )
-
-unique(RNA_clin_data$race)
 ```
 
-**Age-----**
-
-Checking the unique values of that clinical value
+Observe the first records of the clinical information dataframe
 ```{r}
-RNA_clin_data$age <- as.numeric(RNA_clin_data$age)
-sort(unique(RNA_clin_data$age))
+head(RNA_clin_data)
 ```
 
-We assign each value to a bin according to the decade on their age and we save it as a column named "age_label"
+We verify the shape of all of the imported dataframes.
 ```{r}
-RNA_clin_data$age_label <- RNA_clin_data$age
+library(glue)
 
-for (age_row in 1:nrow(RNA_clin_data)) {
-  if (is.na(RNA_clin_data[age_row, "age"]) == FALSE) {
-    if (RNA_clin_data[age_row, "age"] < 40) {
-      RNA_clin_data[age_row, "age_label"] <- "30s"
+glue("Train -> rows(genes): {nrow(train)}, columns(samples): {ncol(train)}")
+glue("Train_mad -> rows(genes): {nrow(train_mad)}, columns(samples): {ncol(train_mad)}")
+glue("RNA_clin_data -> rows(samples): {nrow(RNA_clin_data)}, columns(clinical variables): {ncol(RNA_clin_data)}")
+```
+
+***
+
+## Data Engineering
+
+It is needed to perform feature engineering, specially on the categorical clinical features, since some of the classes are correlated or even duplicated among the set of unique labels per feature. A manual renaming of the classes is performed to account for this issue.
+
+Categorical features to preprocess: 
+- Histological type (histological_type)
+- Histological grade (histological_grade)
+- Race (race)
+- Age (age)
+- Age at menarche (age_at_menarche)
+- Tumor size mm (tumor_size_mm)
+- Survival time (days_to_last_followup)
+
+```{r}
+# Define a vector with the names of the features to engineer
+features_to_engineer <- c("histological_type",
+                          "histological_grade",
+                          "race",
+                          "age",
+                          "age_at_menarche",
+                          "tumor_size_mm",
+                          "days_to_last_followup")
+
+# Define a loop to go over each feature and make the classes compliant
+for (feature in features_to_engineer) {
+  
+  # Display the unique values of the raw features
+  print(unique(RNA_clin_data[feature]))
+  
+  if (feature == "histological_type") {
+    RNA_clin_data$histological_type <-
+      mapvalues(RNA_clin_data$histological_type,
+                c("Mixed (not specified)"),
+                c("Mixed"))
+  } else if (feature == "histological_grade") {
+    RNA_clin_data$histological_grade <-
+      mapvalues(
+        RNA_clin_data$histological_grade,
+        c(
+          "UNKNOWN",
+          "N/A",
+          "Unknown",
+          "II-III",
+          "I LOW GRADE (WELL DIFFERENTIATED)"
+        ),
+        c(NA, NA, NA, "2", "1")
+      )
+  } else if (feature == "race") {
+    RNA_clin_data$race <-
+      mapvalues(
+        RNA_clin_data$race,
+        c(
+          "W",
+          "B",
+          "H",
+          "UNKNOWN",
+          "WHITE",
+          "BLACK OR AFRICAN AMERICAN",
+          "OTHER"
+        ),
+        c(
+          "white",
+          "african american",
+          "hispanic or latino",
+          NA,
+          "white",
+          "african american",
+          NA
+        )
+      )
+  } else if (feature == "age") {
+    
+    RNA_clin_data$age <- as.numeric(RNA_clin_data$age)
+    
+    RNA_clin_data$age_label <- RNA_clin_data$age
+    
+    print(hist(RNA_clin_data$age))
+    
+    for (age_row in 1:nrow(RNA_clin_data)) {
+      if (is.na(RNA_clin_data[age_row, "age"]) == FALSE) {
+        if (RNA_clin_data[age_row, "age"] < 40) {
+          RNA_clin_data[age_row, "age_label"] <- "30s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 40 &
+            RNA_clin_data[age_row, "age"] < 50) {
+          RNA_clin_data[age_row, "age_label"] <- "40s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 50 &
+            RNA_clin_data[age_row, "age"] < 60) {
+          RNA_clin_data[age_row, "age_label"] <- "50s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 60 &
+            RNA_clin_data[age_row, "age"] < 70) {
+          RNA_clin_data[age_row, "age_label"] <- "60s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 70 &
+            RNA_clin_data[age_row, "age"] < 80) {
+          RNA_clin_data[age_row, "age_label"] <- "70s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 80 &
+            RNA_clin_data[age_row, "age"] < 90) {
+          RNA_clin_data[age_row, "age_label"] <- "80s"
+        }
+        if (RNA_clin_data[age_row, "age"] >= 90) {
+          RNA_clin_data[age_row, "age_label"] <- "90s"
+        }
+      }
     }
-    if (RNA_clin_data[age_row, "age"] >= 40 &
-        RNA_clin_data[age_row, "age"] < 50) {
-      RNA_clin_data[age_row, "age_label"] <- "40s"
+  } else if (feature == "tumor_size_mm") {
+    
+    RNA_clin_data$tumor_size_mm <- as.numeric(RNA_clin_data$tumor_size_mm)
+    
+    RNA_clin_data$tumor_size <- RNA_clin_data$tumor_size_mm
+    
+    print(hist(RNA_clin_data$tumor_size_mm))
+    
+    for (age_row in 1:nrow(RNA_clin_data)) {
+      if (is.na(RNA_clin_data[age_row, "tumor_size_mm"]) == FALSE) {
+        if (RNA_clin_data[age_row, "tumor_size_mm"] < 10) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Below 10 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 10 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 20) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 10 and 19 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 20 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 30) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 20 and 29 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 30 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 40) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 30 and 39 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 40 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 50) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 40 and 49 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 50 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 60) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 50 and 59 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 60 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 70) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 60 and 69 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 70 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 80) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 70 and 79 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 80 &
+            RNA_clin_data[age_row, "tumor_size_mm"] < 90) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Between 80 and 89 mm"
+        }
+        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 90) {
+          RNA_clin_data[age_row, "tumor_size"] <- "Greater than 89 mm"
+        }
+      }
     }
-    if (RNA_clin_data[age_row, "age"] >= 50 &
-        RNA_clin_data[age_row, "age"] < 60) {
-      RNA_clin_data[age_row, "age_label"] <- "50s"
-    }
-    if (RNA_clin_data[age_row, "age"] >= 60 &
-        RNA_clin_data[age_row, "age"] < 70) {
-      RNA_clin_data[age_row, "age_label"] <- "60s"
-    }
-    if (RNA_clin_data[age_row, "age"] >= 70 &
-        RNA_clin_data[age_row, "age"] < 80) {
-      RNA_clin_data[age_row, "age_label"] <- "70s"
-    }
-    if (RNA_clin_data[age_row, "age"] >= 80 &
-        RNA_clin_data[age_row, "age"] < 90) {
-      RNA_clin_data[age_row, "age_label"] <- "80s"
-    }
-    if (RNA_clin_data[age_row, "age"] >= 90) {
-      RNA_clin_data[age_row, "age_label"] <- "90s"
+    
+  } else if (feature == "days_to_last_followup") {
+    RNA_clin_data$Surv_event <- NA
+    RNA_clin_data$Surv_months <- NA
+    RNA_clin_data$Surv_days <- NA
+    
+    for (i in 1:nrow(RNA_clin_data)) {
+      if (is.na(RNA_clin_data$days_to_last_followup[i]) != T) {
+        RNA_clin_data$Surv_months[i] <-
+          RNA_clin_data$days_to_last_followup[i] / 30
+        RNA_clin_data$Surv_days[i] <-
+          RNA_clin_data$days_to_last_followup[i]
+      }
+      if (is.na(RNA_clin_data$survival_months[i]) != T) {
+        RNA_clin_data$Surv_months[i] <- RNA_clin_data$survival_months[i]
+        RNA_clin_data$Surv_days[i] <-
+          RNA_clin_data$survival_months[i] * 30
+      }
+      if (isTRUE(is.na(RNA_clin_data$vital_status[i]) != T) &
+          RNA_clin_data$vital_status[i] %in% c("alive", "Living")) {
+        RNA_clin_data$Surv_event[i] <- 0
+      }
+      if (isTRUE(is.na(RNA_clin_data$vital_status[i]) != T) &
+          RNA_clin_data$vital_status[i] %in% c("dead", "Died of Disease") == T) {
+        RNA_clin_data$Surv_event[i] <- 1
+      }
     }
   }
+  
+  # Display the unique values of the engineered features
+  print(unique(RNA_clin_data[feature]))
 }
 
-unique(RNA_clin_data$age_label)
 ```
 
-**Age at menarche-----**
-Checking the unique values of that clinical variable
-```{r}
-unique(RNA_clin_data$age_at_menarche)
-```
-The set of values are a small set, so we can skip the binning and use the values as they are.
+***
 
-**Tumor size-----**
-Checking the unique values of that clinical variable
-```{r}
-sort(unique(RNA_clin_data$tumor_size_mm))
-```
+## Dimensionality reduction
 
-We assign each value to a bin according to the decade on their size and we save it as a column named "tumor_size"
-```{r}
-RNA_clin_data$tumor_size <- RNA_clin_data$tumor_size_mm
-
-for (age_row in 1:nrow(RNA_clin_data)) {
-  if (is.na(RNA_clin_data[age_row, "tumor_size_mm"]) == FALSE) {
-    if (RNA_clin_data[age_row, "tumor_size_mm"] < 10) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Below 10 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 10 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 20) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 10 and 19 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 20 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 30) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 20 and 29 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 30 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 40) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 30 and 39 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 40 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 50) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 40 and 49 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 50 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 60) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 50 and 59 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 60 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 70) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 60 and 69 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 70 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 80) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 70 and 79 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 80 &
-        RNA_clin_data[age_row, "tumor_size_mm"] < 90) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Between 80 and 89 mm"
-    }
-    if (RNA_clin_data[age_row, "tumor_size_mm"] >= 90) {
-      RNA_clin_data[age_row, "tumor_size"] <- "Greater than 89 mm"
-    }
-  }
-}
-
-unique(RNA_clin_data$tumor_size)
-```
-
-**Survival time-----**
-Checking the unique values of that clinical variable
-```{r}
-sort(unique(RNA_clin_data$days_to_last_followup))
-RNA_clin_data[is.na(RNA_clin_data$days_to_last_followup)!= T,]$source_db
-```
-
-```{r}
-sort(unique(RNA_clin_data$vital_status))
-RNA_clin_data[is.na(RNA_clin_data$vital_status)!= T,]$source_db
-```
-
-```{r}
-sort(unique(RNA_clin_data$survival_months))
-RNA_clin_data[is.na(RNA_clin_data$survival_months)!= T,]$source_db
-```
-
-Let's create a new variable for survival, where we will have:
- -  Surv_months > months up to the point where we know the person is either dead (0) or alive (1)
- -  Surv_event > result after those months: dead(0) or alive(1)
-
-```{r}
-RNA_clin_data$Surv_event <- NA
-RNA_clin_data$Surv_months <- NA
-RNA_clin_data$Surv_days <- NA
-
-for (i in 1:nrow(RNA_clin_data)){
-  if (is.na(RNA_clin_data$days_to_last_followup[i])!=T){
-    RNA_clin_data$Surv_months[i] <- RNA_clin_data$days_to_last_followup[i]/30
-    RNA_clin_data$Surv_days[i] <- RNA_clin_data$days_to_last_followup[i]
-  }
-  if (is.na(RNA_clin_data$survival_months[i])!=T){
-    RNA_clin_data$Surv_months[i] <- RNA_clin_data$survival_months[i]
-    RNA_clin_data$Surv_days[i] <- RNA_clin_data$survival_months[i]*30
-  }
-  if (isTRUE(is.na(RNA_clin_data$vital_status[i])!=T) & RNA_clin_data$vital_status[i] %in% c("alive","Living")){
-    RNA_clin_data$Surv_event[i] <- 0
-  }
-  if (isTRUE(is.na(RNA_clin_data$vital_status[i])!=T) & RNA_clin_data$vital_status[i] %in% c("dead", "Died of Disease")==T){
-    RNA_clin_data$Surv_event[i] <- 1
-  }
-}
-```
-
-
-## Dimensions reduction------------------------------------------------------
-There is a great need to develop analytical methodology to analyze and to exploit the information contained in gene expression data. Because of the large number of genes and the complexity of biological networks, clustering is a useful exploratory technique for analysis of gene expression data. Prior starting the clustering process, principal component analysis (PCA) is needed to reduce the dimensionality of our large and complex data set and allow us to explain the data in only two dimensions.
+There is a great need to develop analytical methodology to analyze and to exploit the information contained in gene expression data. Because of the large number of genes and the complexity of biological networks, clustering is a useful exploratory technique for analysis of gene expression data. Prior starting the clustering process, principal component analysis (PCA) is needed to reduce the dimensionality of our large and complex data set and allow us to explain the data in a matrix of fewer dimensions (more manageable and memory efficient).
 
 **Principal components analysis (PCA)**
 To compute a PCA in R we can use the prcomp() function. This function takes a matrix of data, where the columns are the variables that we want to use to transform our samples, which should be the rows of the matrix.
 
 In our case, we want to look for similarities across our patients (samples = rows) based on gene expression (variables = columns). For that reason, we need to provide a transposed version of our table to the prcomp() function:
 ```{r}
-t(train)[0:10,0:10]
+t(train_mad)[1:10,1:10]
 ```
 
+Pass the transposed gene dataframe to the prcomp() function, so each row represents a sample and each column a gene.
 ```{r}
 # Principal components analysis
 x_train <- prcomp(t(train_mad), scale = T)
 ```
 
-Visualize eigenvalues (scree plot) to show the percentage of variances explained by each principal component.
+Visualize eigenvalues (scree plot) to show the percentage of variances explained by each principal component. We target to keep ~75-85% of the variance from the original dataset.
 ```{r}
-scree_plot <- fviz_eig(x_train)
+scree_plot <- fviz_eig(x_train, addlabels=TRUE)
 scree_plot
 ```
-As seen in the plot, we can explain most
+As seen in the plot, we are not able to get the desired variance percentage even after adding up the first 2 components, therefore, more than 2 components are used for model training. On the other side, only two components are used to visualize the data points in a reader-friendly manner.
 
-Re-labeling the patients IDs
-```{r}
-# We check that the patient ID doesn't repeat
-temp_train <- table(x_train[["x"]])
-isTRUE(any(temp_train > 1)) # if the result is FALSE, they appear only once
-```
-We save the original IDs in another list inside of x
-```{r}
-orig_IDs_train <-
-  matrix(row.names(x_train[["x"]]), ncol = 1) # we store the original IDs
-short_IDs_train <-
-  as.character(matrix(data = 1:nrow(x_train[["x"]]), ncol = 1)) # we store the short IDs
-IDs_train <-
-  cbind(orig_IDs_train, short_IDs_train) # we bind them in the same matrix
-x_train[["IDs"]] <-
-  IDs_train # We append the new IDs matrix to the x list
-```
-
-We proceed to assign a unique number to each patient
-```{r}
-row.names(x_train[["x"]]) <- make.names(short_IDs_train, unique=TRUE)
-
-x_train[["x"]][0:10,0:10]
-```
 
 **Graph of individuals**
-We plot to visualize the short IDs of each patient 
+We plot to visualize the results of the dimensionality reduction technique on the gene expression data.
 ```{r}
 # train
-fviz_pca_ind(x_train,
-             col.ind = "cos2", # Color by the quality of representation
-             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
-             repel = T,     # Avoid text overlapping,
-             max.overlaps = Inf
-             )
+fviz_pca_ind(
+  x_train,
+  col.ind = "cos2",
+  # Color by the quality of representation
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = T,
+  # Avoid text overlapping,
+  max.overlaps = Inf
+)
 ```
 
-Checking if there is a clear difference across the different components
+Visual verification of the differences across different components
 ```{r}
 vals_to_check <- as.factor(RNA_clin_data$race)
 
+# PC1 vs PC2
 plot(
   x_train$rotation[, 1],
   x_train$rotation[, 2],
@@ -338,6 +326,8 @@ plot(
   ylab = "PCA component 2",
   col = vals_to_check
 )
+
+# PC3 vs PC4
 plot(
   x_train$rotation[, 3],
   x_train$rotation[, 4],
@@ -345,6 +335,8 @@ plot(
   ylab = "PCA component 4",
   col = vals_to_check
 )
+
+# PC5 vs PC6
 plot(
   x_train$rotation[, 5],
   x_train$rotation[, 6],
@@ -353,51 +345,65 @@ plot(
   col = vals_to_check
 )
 ```
-We can see that there isn't an apparent difference in the data explained by the first 6 components with the highest explained variance, so, we'll proceed with the analysis of the first two PCs.
+We can see that there isn't an apparent difference in the data explained by the first 6 components with the highest explained variance, so, we'll proceed with the analysis with a visualization focused on the first two PCs.
 
-https://rpubs.com/Bury/ClusteringOnPcaResults 
+***
 
-## Consensus Clustering------------------------------------------------------
+## Consensus Clustering
 
-*Extract taken from the M3C package documentation (https://rdrr.io/bioc/M3C/f/vignettes/M3Cvignette.Rmd)*
-Genome-wide expression data is used to stratify patients into classes using clustering algorithms for precision medicine. The Monti consensus clustering algorithm (Monti et al., 2003) is a widely applied method to identify the number of clusters (K) through the principle of stability selection. This algorithm works by resampling and clustering the data for each K and a NXN consensus matrix is calculated, where each element represents the fraction of times two samples clustered together. A perfectly stable matrix would consist entirely of 0s and 1s, representing all sample pairs always clustering together or not together over resampling iterations. The next step is to compare the stability of these consensus matrices to decide K. The Proportion of Ambiguous Clustering (PAC) score (Senbabaoglu et al., 2014) has been proposed to assess consensus matrix stability for each K, however, it has bias towards greater values of K. This is due to a general problem with this type of consensus clustering algorithm that occurs because as K increases the consensus matrix converges towards a matrix of perfect stability simply by chance. The alternative well used delta K metric to find K is subjective as it relies on finding an elbow point and has been demonstrated to be inferior to the PAC score. Monte Carlo reference-based consensus clustering (M3C) (John et al., 2018) was made to solve these problems by comparing the real stability scores with those expected under a random model. M3C uses a Monte Carlo simulation to generate null distributions of stability scores along the range of K which, by comparing with the real stability scores, are used to decide the optimal K and reject the null hypothesis K=1.
+**Extract taken from the M3C package documentation (https://rdrr.io/bioc/M3C/f/vignettes/M3Cvignette.Rmd)**
 
+Genome-wide expression data is used to stratify patients into classes using clustering algorithms for precision medicine. The Monti consensus clustering algorithm (Monti et al., 2003) is a widely applied method to identify the number of clusters (K) through the principle of stability selection. This algorithm works by resampling and clustering the data for each K and a NXN consensus matrix is calculated, where each element represents the fraction of times two samples clustered together. A perfectly stable matrix would consist entirely of 0s and 1s, representing all sample pairs always clustering together or not together over resampling iterations. 
+
+The next step is to compare the stability of these consensus matrices to decide K. The Proportion of Ambiguous Clustering (PAC) score (Senbabaoglu et al., 2014) has been proposed to assess consensus matrix stability for each K, however, it has bias towards greater values of K. This is due to a general problem with this type of consensus clustering algorithm that occurs because as K increases the consensus matrix converges towards a matrix of perfect stability simply by chance. The alternative well used delta K metric to find K is subjective as it relies on finding an elbow point and has been demonstrated to be inferior to the PAC score. 
+
+Monte Carlo reference-based consensus clustering (M3C) (John et al., 2018) was made to solve these problems by comparing the real stability scores with those expected under a random model. M3C uses a Monte Carlo simulation to generate null distributions of stability scores along the range of K which, by comparing with the real stability scores, are used to decide the optimal K and reject the null hypothesis K=1.
+
+Choose the number of components that will represent ~85% of the variance of the data
 ```{r}
-# Extract coordinates of individuals from the PCA result
-ind.coord_train <- as.data.frame(get_pca_ind(x_train)$coord)
+# Define a variable with the PCs to keep
+PCs_to_keep = 285
 
-ind.coord_train[0:10,0:10]
+# Print the cumulative variance of a range of PCs
+summary(x_train)$importance[3, 1:PCs_to_keep][PCs_to_keep]
 ```
 
-Performing the consensus clustering on the normalized data
+Perform consensus clustering on the normalized data
 ```{r}
 library(dplyr)
 
-x_train[["x"]] <- mutate_all(as.data.frame(x_train[["x"]]), function(x) as.numeric(as.character(x)))
+# Change gene expression data type to numeric
+x_train[["x"]] <-
+  mutate_all(as.data.frame(x_train[["x"]]), function(x)
+    as.numeric(as.character(x)))
 
-# We pass the gene expression data frame to perform consensus clustering
-res_train <- M3C(x_train[["x"]],
-                 removeplots = TRUE,
-                 iters = 50,
-                 fsize = 8,
-                 lthick = 1,
-                 dotsize = 1.25)
+# Pass the gene expression data frame to perform consensus clustering
+# Where each row is a PC and each column is a sample.
+res_train <- M3C(
+  t(x_train[["x"]][, 1:PCs_to_keep]),
+  removeplots = TRUE,
+  iters = 50,
+  fsize = 8,
+  lthick = 1,
+  dotsize = 1.25
+)
 
-optimal_k_pac_train = max(res_train[["assignments"]]);
+optimal_k_pac_train = max(res_train[["assignments"]])
+
 ```
 
 (Optional) Save the result of consensus clustering for later
 ```{r}
-# Save the result object to a local file
-saveRDS(res_train,
-        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
+## Uncomment to save the result object to a local file
+#saveRDS(res_train,
+#        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
 # Restore the object
-res_train <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
+#res_train <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_res_final.rds")
 ```
 
-### Checking the scores
+### Check the scores
 
-The scores and p values are contained within the res$scores object. We can see below the RCSI reaches a maxima at K = 2, the p_score supports this optimal K decision. This means the null hypothesis that K = 1 can be rejected for this dataset because we have achieved significance (alpha=0.05) versus a dataset with no clusters.
+The scores and p values are contained within the res$scores object. We can see below the RCSI reaches a maxima at K = 3, the p_score supports this optimal K decision. This means the null hypothesis that K = 1 can be rejected for this dataset because we have achieved significance (alpha=0.05) versus a dataset with no clusters.
 
 ```{r}
 # train
@@ -416,7 +422,7 @@ res_train$plots[[1]]
 
 2. PAC Score
 
-This figure below shows the PAC score, we can see an elbow at K = 5 which is suggestive this is the best K. However, the bias of consensus clustering can be seen here as the PAC score naturally tends towards lower values as K increases (see above plot), making selecting K without taking this into account subject to bias. Selecting the minimal PAC score will only work when the clusters are very well seperated.
+This figure below shows the PAC score, we can see an elbow at K = 3 which is suggestive this is the best K. However, the bias of consensus clustering can be seen here as the PAC score naturally tends towards lower values as K increases (see above plot), making selecting K without taking this into account subject to bias. Selecting the minimal PAC score will only work when the clusters are very well seperated.
 
 ```{r}
 res_train$plots[[2]]
@@ -424,7 +430,7 @@ res_train$plots[[2]]
 
 3. Relative Cluster Stability Index (RCSI)
 
-The Relative Cluster Stability Index (RCSI) was derived and associated 95% confidence intervals which take into account the reference PAC scores using the reference mean. This metric is better than the PAC score for deciding class number, where the maximum value corresponds to the optimal K. In this example the RCSI has an optima at K=2. Either the RCSI or p scores can be used to select K, in the Bioinformatics paper we used M3C with the p values to select K 
+The Relative Cluster Stability Index (RCSI) was derived and associated 95% confidence intervals which take into account the reference PAC scores using the reference mean. This metric is better than the PAC score for deciding class number, where the maximum value corresponds to the optimal K. In this example the RCSI has an optima at K=3. Either the RCSI or p scores can be used to select K, in the Bioinformatics paper we used M3C with the p values to select K 
 
 ```{r}
 res_train$plots[[4]]
@@ -432,7 +438,7 @@ res_train$plots[[4]]
 
 4. P score
 
-Finally, we calculate a p score from the distribution, here we display the p scores from the beta distribution. If none of the p scores reach significance over a reasonable range of K (e.g. 10), then we accept the null hypothesis. In the GBM dataset, we can see K = 2 reaches signficance with an alpha of 0.05, therefore we can reject the null hypothesis K=1 for the GBM dataset.
+Finally, we calculate a p score from the distribution, here we display the p scores from the beta distribution. If none of the p scores reach significance over a reasonable range of K (e.g. 10), then we accept the null hypothesis. In the GBM dataset, we can see K = 3 reaches signficance with an alpha of 0.05, therefore we can reject the null hypothesis K=1 for the GBM dataset.
 ```{r}
 res_train$plots[[3]]
 ```
@@ -442,7 +448,7 @@ res_train$plots[[3]]
 There is another method to find the ideal K value based on a different evaluation criteria (entropy, instead of the previously used 'PAC'). We use information entropy and aim to minimize it to find K, where lower values correspond to less uncertainty in the system (more stability during sampling). Whilst this function often gives pretty similar results to the PAC score, it makes better theoretical sense because it does not rely on a subjective window, neither does it rely on calculating a CDF first and a metric from this CDF second.
 ```{r}
 res_entropy_train <- M3C(
-  train,
+  t(x_train[["x"]][,1:PCs_to_keep]),
   method = 2,
   fsize = 8,
   lthick = 1,
@@ -462,11 +468,10 @@ res_entropy_train$plots[[2]]
 Comparing both consensus clustering methods optimal K
 ```{r}
 if (optimal_k_pac_train == optimal_k_entropy_train) {
-  k_clusters_train = 2
   
   print(paste0(
     "The optimal k clusters value is: ",
-    as.character(k_clusters_train)
+    as.character(optimal_k_pac_train)
   ))
 }
 ```
@@ -482,9 +487,10 @@ The 3 lines below extract the ordered (according in clustering results) expressi
 We gather the RNA-seq data and clinical data from the clustering results as different variables
 ```{r}
 # RNA-seq data and cluster annotation
-RNA_seq_data <- res_train$realdataresults[[2]][["ordered_data"]]
+RNA_seq_data <-
+  res_train$realdataresults[[optimal_k_pac_train]][["ordered_data"]]
 RNA_seq_cluster_annotation <-
-  res_train$realdataresults[[2]][["ordered_annotation"]]
+  res_train$realdataresults[[optimal_k_pac_train]][["ordered_annotation"]]
 
 # Joining expression and cluster annotation
 RNA_seq_merged <-
@@ -493,19 +499,22 @@ RNA_seq_merged <-
   )))
 
 RNA_seq_merged_allgenes <-
-  as.data.frame(t(rbind(
-    train_mad, t(RNA_seq_cluster_annotation)
-  )))
+  as.data.frame(merge(t(train_mad), RNA_seq_cluster_annotation, by = "row.names"))
+rownames(RNA_seq_merged_allgenes) <-
+  RNA_seq_merged_allgenes$Row.names
+
+RNA_seq_merged_allgenes = subset(RNA_seq_merged_allgenes, select = -c(`Row.names`))
 
 # Clinical data
 RNA_clin_data <-
   merge(RNA_clin_data, RNA_seq_cluster_annotation, by = "row.names")
+
 rownames(RNA_clin_data) <- RNA_clin_data$Row.names
 ```
 
-Save the results of the two clusters in a set of variables
+Save the results of the 3 clusters in a set of variables
 ```{r}
-k_clusters_train = 2
+k_clusters_train = 3
 
 data_train <-
   res_train$realdataresults[[k_clusters_train]]$ordered_data
@@ -587,10 +596,10 @@ print(ccl)
 From looking at the heatmap, we can discard that the clustering was biased by the batch effect of the data sources.
 
 **K-means clustering**
-We proceed to apply a K-means clustering procedure on the PCA selected components (in this case, Dim 1 and Dim 2).
+We proceed to apply a K-means clustering procedure on the PCA selected components.
 ```{r}
-k_train <- kmeans(x_train[["x"]][,1:2],
-                  centers = 2)
+k_train <- kmeans(x_train[["x"]][,1:PCs_to_keep],
+                  centers = k_clusters_train)
 ```
 
 We plot the resulting clusters
@@ -605,7 +614,7 @@ variance.percent_train <- eigenvalue$variance.percent
 library(ggpubr)
 library(dplyr)
 
-temp <- do.call("cbind", list(x_train[["x"]],as.data.frame(x_train$cluster)))
+temp <- do.call("cbind", list(x_train[["x"]][,1:PCs_to_keep],as.data.frame(x_train$cluster)))
 
 ggscatter(
   temp,
@@ -625,15 +634,21 @@ ggscatter(
 ```
 
 ```{r}
+# setting the dataframes in a list
+list_of_data = list(temp, RNA_clin_data)
+
+# this will get the intersection of the row.names for everything in the list
+common_names = Reduce(intersect, lapply(list_of_data, row.names))
+common_names
+```
+
+
+```{r}
 library(ggrepel)
 library(factoextra)
 library(ggpubr)
 
-histological_type <- as.factor(RNA_clin_data$histological_type)
-temp$histological_type <- histological_type
-
-histological_grade <- as.factor(RNA_clin_data$histological_grade)
-temp$histological_grade <- histological_grade
+temp <- temp[row.names(temp) %in% common_names,]
 
 source_db <- as.factor(RNA_clin_data$source_db)
 temp$source_db <- source_db
@@ -656,7 +671,7 @@ ggscatter(
 ```
 By looking at the previous plot, we confirm (once again), that the clustering was not biased due to the difference in data sources and gene expression techniques.
 
-## Consensus Clustering (second method: NMF)---------------------------------
+## Consensus Clustering (second method: NMF)
 ```{r}
 options(stringsAsFactors=F)
 source("~/TNBC_Research/code/analysis/nmfconsensus.R")
@@ -708,7 +723,7 @@ res_df[which(res_df$nmf_cluster != res_df$`ind.coord_train$cluster`),]
 ```
 In total, there were 42 mismatches of cluster assignations out of 498, (92% clustering similarity between both methods)
 
-## HDBSCAN Clustering ---------------------------------
+## HDBSCAN Clustering
 
 ```{r}
 # importing the library
@@ -717,19 +732,19 @@ library("dbscan")
 
 To run the HDBSCAN algorithm, simply pass the dataset and the (single) parameter value ‘minPts’ to the hdbscan function.
 ```{r}
-cl <- hdbscan(temp[,1:2], minPts = 4)
+cl <- hdbscan(x_train[["x"]][,1:PCs_to_keep], minPts = 3)
 cl
 ```
 
 ```{r}
-plot(temp[,1:2], col=cl$cluster+1, pch=20)
+plot(x_train[["x"]][,1:3], col=cl$cluster+1, pch=20)
 ```
 
 ```{r}
-plot(temp[,1:2], col=cl$cluster+1, pch=21)
+plot(x_train[["x"]][,1:3], col=cl$cluster+1, pch=21)
 colors <- mapply(function(col, i) adjustcolor(col, alpha.f = cl$membership_prob[i]), 
                  palette()[cl$cluster+1], seq_along(cl$cluster))
-points(temp[,1:2], col=colors, pch=20)
+points(x_train[["x"]][,1:3], col=colors, pch=20)
 ```
 
 ```{r}
@@ -740,7 +755,7 @@ plot(cl)
 plot(cl$hc, main="HDBSCAN* Hierarchy", )
 ```
 
-####
+#### TODO
 Let's compare with the consensus clustering results
 ```{r}
 consensus_res <- as.data.frame(ind.coord_train$cluster)
@@ -761,14 +776,16 @@ res_df[which(res_df$nmf_cluster != res_df$`ind.coord_train$cluster`),]
 ```
 In total, there were 42 mismatches of cluster assignations out of 498, (92% clustering similarity between both methods)
 
-## Clinical data visualization per cluster-----------------------------------
+## Clinical data visualization per cluster
 
-We split the clinical data in cluster 1 and cluster 2
+We split the clinical data in cluster 1, cluster 2 and cluster 3
 ```{r}
 clin_data1 <-
-  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 1), ]
+  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 1),]
 clin_data2 <-
-  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 2), ]
+  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 2),]
+clin_data3 <-
+  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 3),]
 ```
 
 **Plotting categorical and numeric variables per cluster**
@@ -816,9 +833,18 @@ for (vars in c(
                       "variable",
                       "count")
   
+  var3 <- as.data.frame(table(clin_data3[vars]))
+  cluster_info <- as.data.frame(rep("3",
+                                    nrow(var3)))
+  var3 <- cbind(cluster_info, var3)
+  colnames(var3) <- c("cluster_info",
+                      "variable",
+                      "count")
+  
   
   merged_df <- rbind(var1,
-                     var2)
+                     var2,
+                     var3)
   merged_df
   
   ## PLOTS
@@ -839,7 +865,8 @@ for (vars in c(
                   "age_at_menarche",
                   "Surv_months")) {
     merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
-                       clin_data2[c("consensuscluster", vars)])
+                       clin_data2[c("consensuscluster", vars)],
+                       clin_data3[c("consensuscluster", vars)])
     colnames(merged_df) <- c("consensuscluster",
                              "vars")
     
@@ -860,12 +887,14 @@ for (vars in c(
 
 ```
 Overall, at least visually, the plots seem to have a similar distribution of clinical values. The main highlights so far could be done on the proportions, e.g. 
--  the cluster no.2 presents:
-   -  A drastically higher proportion of not hispanic or latino patients.
-   -  A higher proportion of ductal histological type and is the only group among the two that presents the medular and metaplastic       histological type.
-   -  Include a higher proportion of older patients, being the only cluster featuring patients of the 90 years old group.
-   -  Response to treatment in this group seems to be equally poor or partial, meanwhile in the cluster 1 there are two instances of       progressive cases.
-   -  A higher proportion of patients in this cluster are alive, compared to the proportions in cluster 1. 
+- The cluster 1 is the only one where methastasis was not present, with cluster 3 being the group with higher proportion of methastasis.
+- The cluster 2 presents the lower survival months, meaning that it could represent the group with the lowest survival expectency.
+- The cluster 1 participants presented an earlier age at menarche compared to the other clusters.
+- The cluster 1 presents slightlier younger individuals than the other two clusters.
+- The cluster 3 presented a higher percentage of poor response to treatment, the cluster 2 presented a higher percentage of partial response to treatment, meanwhile the cluster 1 presented equal odds between partial and poor.
+- The cluster 1 doesn't present cancer with histological stage = 1.
+- The cluster 2 presents the highest percentage of not hispanic or latino samples.
+- The cluster 1 is composed of younger individuals than cluster 2 and 3.
    
 
 Percentages
@@ -926,8 +955,25 @@ for (vars in c(
                       "percentage")
   
   
+  var3 <- as.data.frame(table(clin_data3[vars]))
+  cluster_info <- as.data.frame(rep("3",
+                                    nrow(var3)))
+  var3 <- cbind(cluster_info, var3)
+  
+  var3_perc <- var3
+  var3_perc$Freq <-  (var3$Freq/sum(var3$Freq))
+  
+  colnames(var3) <- c("cluster_info",
+                      "variable",
+                      "count")
+  colnames(var3_perc) <- c("cluster_info",
+                      "variable",
+                      "percentage")
+  
+  
   merged_df <- rbind(var1_perc,
-                     var2_perc)
+                     var2_perc,
+                     var3_perc)
   
   merged_df
   
@@ -949,7 +995,8 @@ for (vars in c(
                   "age_at_menarche",
                   "Surv_months")) {
     merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
-                       clin_data2[c("consensuscluster", vars)])
+                       clin_data2[c("consensuscluster", vars)],
+                       clin_data3[c("consensuscluster", vars)])
     colnames(merged_df) <- c("consensuscluster",
                              "vars")
     
@@ -970,11 +1017,11 @@ for (vars in c(
 
 ```
 
-## Significance tests on clinical information--------------------------------
+## Significance tests on clinical information
 
-We take a look at the clinical data
+Take a look at the clinical data
 ```{r}
-RNA_clin_data[0:10, 0:10]
+RNA_clin_data[0:10, 0:10] 
 ```
 
 ### SURVIVAL PLOT
@@ -982,9 +1029,11 @@ RNA_clin_data[0:10, 0:10]
 The Kaplan–Meier estimator, also known as the product limit estimator, is a non-parametric statistic used to estimate the survival function from lifetime data. In medical research, it is often used to measure the fraction of patients living for a certain amount of time after treatment.
 ```{r}
 library("survminer")
-
 require("survival")
+
+# survival in days
 fit_days <- survfit(Surv(Surv_days, Surv_event) ~ consensuscluster, data = RNA_clin_data)
+# survival in months
 fit_months <- survfit(Surv(Surv_months, Surv_event) ~ consensuscluster, data = RNA_clin_data)
 ```
 
@@ -1004,43 +1053,147 @@ ggsurvplot(
   risk.table = TRUE,        # Add risk table
   xlab = "Time in days",   # customize X axis label.
   break.time.by = 365,     # break X axis in time intervals by 500.
-  risk.table.height = 0.25, # Useful to change when you have multiple groups
+  risk.table.height = 0.3, # Useful to change when you have multiple groups
   ggtheme = theme_bw(),      # Change ggplot2 theme,
   ncensor.plot = F      # plot the number of censored subjects at time t
 )
 ```
 
-
-Looking at the statistical information of both survival plots
+Look at the statistical information of one of the survival plots
 ```{r}
 res.sum <- surv_summary(fit_months)
 res.sum
 ```
 
-### Logistic regression on histological type
+Cox Proportional Hazards Model
 ```{r}
+# Fit Cox Model
+cox <-
+  coxph(Surv(Surv_months, Surv_event) ~ consensuscluster, data = RNA_clin_data)
+
+summary(cox)
+```
+
+Plot the Cox analysis
+
+But is there a more systematic way to look at the different covariates? As you might remember from one of the previous passages, Cox proportional hazards models allow you to include covariates. You can build Cox proportional hazards models using the coxph function and visualize them using the ggforest. These type of plot is called a forest plot. It shows so-called hazard ratios (HR) which are derived from the model for all covariates that we included in the formula in coxph. Briefly, an HR > 1 indicates an increased risk of death (according to the definition of h(t)) if a specific condition is met by a patient. An HR < 1, on the other hand, indicates a decreased risk.
+
+```{r}
+cox_fit <- survfit(cox)
+
+ggsurvplot(
+  cox_fit,
+  data = RNA_clin_data,
+  size = 1,                 # change line size
+  conf.int = TRUE,          # Add confidence interval
+  pval = TRUE,              # Add p-value
+  risk.table = TRUE,        # Add risk table
+  xlab = "Time in days",   # customize X axis label.
+  risk.table.height = 0.3, # Useful to change when you have multiple groups
+  ggtheme = theme_bw(),      # Change ggplot2 theme,
+  ncensor.plot = F      # plot the number of censored subjects at time t
+)
+```
+
+```{r}
+library("ggplot2")
+library("survminer")
+library("survival")
+
+# Fit a Cox proportional hazards model
+fit.coxph <- coxph(Surv(Surv_months, Surv_event) ~ consensuscluster, data = RNA_clin_data)
+
+ggforest(fit.coxph, data = RNA_clin_data)
+```
+
+```{r}
+summary(fit.coxph)
+```
+
+
+
+## Statistical tests on clinical data
+### Statistical test: histological type
+
+Calculate the count, mean and standard deviation of the 3 groups
+```{r}
+library(dplyr)
+
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(histological_type, na.rm = TRUE),
+    sd = sd(histological_type, na.rm = TRUE)
+  )
+```
+
+Calculate the frequencies of each class into each cluster
+```{r}
+temp_table <- table(RNA_clin_data[c("histological_type", "consensuscluster")])
+temp_table
+```
+Calculate the proportion of the total classes frequencies belonging to each cluster
+```{r}
+ftable(round(prop.table(temp_table), 3))
+```
+
+Bar plot, with each bar representing 100%
+```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster, 
+           fill = histological_type)) + 
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")
+```
+
+#### Logistic regression on histological type
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ histological_type,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
+
+Cluster 1 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ histological_type,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
+```
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ histological_type,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
 -  Deviance residuals look good, since they are symmetrical and close to 0
 -  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
 -  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
 
-```{r}
-table(RNA_clin_data[c("histological_type", "consensuscluster")])
-```
 As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
 
 
-### Chi2 test on histological type
+#### Chi2 test on histological type
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
@@ -1061,6 +1214,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1073,12 +1234,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1157,30 +1326,87 @@ print(mut_chisq_test)
 ```
 
 
-### Logistic regression on race
+### Statistical test: race
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
+library(dplyr)
+
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(race, na.rm = TRUE),
+    sd = sd(race, na.rm = TRUE)
+  )
+```
+
+Calculate the frequencies of each class into each cluster
+```{r}
+temp_table <- table(RNA_clin_data[c("race", "consensuscluster")])
+temp_table
+```
+Calculate the proportion of the total classes frequencies belonging to each cluster
+```{r}
+ftable(round(prop.table(temp_table), 3))
+```
+
+Bar plot, with each bar representing 100%
+```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster, 
+           fill = race)) + 
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")
+```
+
+#### Logistic regression on race
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ race,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  According to the P-Values and effect sizes, race is not a significant on cluster differentiation.
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("race", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ race,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
-No big differences between clusters 
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ race,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
 
 
-### Chi2 test on race
-
+#### Chi2 test on race
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
@@ -1201,6 +1427,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1213,12 +1447,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1248,75 +1490,87 @@ for (value in c(values_to_check)) {
 
 ```
 
-Doing the chi2 test on the entire feature
+### Statistical test: histological grade
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "race"
-values_to_check <- unique(RNA_clin_data$race)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[which(RNA_clin_data[, "consensuscluster"] == 1), ]$race)
-cluster2 <-
-  table(RNA_clin_data[which(RNA_clin_data[, "consensuscluster"] == 2), ]$race)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"), race = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(histological_grade, na.rm = TRUE),
+    sd = sd(histological_grade, na.rm = TRUE)
+  )
 ```
 
-
-### Logistic regression on histological grade
+Calculate the frequencies of each class into each cluster
 ```{r}
+temp_table <- table(RNA_clin_data[c("histological_grade", "consensuscluster")])
+temp_table
+```
+Calculate the proportion of the total classes frequencies belonging to each cluster
+```{r}
+ftable(round(prop.table(temp_table), 3))
+```
+
+Bar plot, with each bar representing 100%
+```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster, 
+           fill = histological_grade)) + 
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")
+```
+
+#### Logistic regression on histological grade
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ histological_grade,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  According to the P-Values and effect size the histological grade is not a good differentiationg factor between clusters.
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("histological_grade", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ histological_grade,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ histological_grade,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
 As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
 
 
-### Chi2 test on histological grade
+#### Chi2 test on race
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
@@ -1337,6 +1591,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1349,11 +1611,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
+  
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1383,88 +1654,88 @@ for (value in c(values_to_check)) {
 
 ```
 
-Doing the chi2 test on the entire feature
+
+
+### Statistical test: age
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "histological_grade"
-values_to_check <- unique(RNA_clin_data$histological_grade)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 1), ]$histological_grade)
-cluster2 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 2), ]$histological_grade)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"),
-       histological_grade = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(age, na.rm = TRUE),
+    sd = sd(age, na.rm = TRUE)
+  )
 ```
 
-
-### Logistic regression on age
+Boxplot
 ```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster,
+           y = age,
+           fill = age)) + 
+  geom_jitter(color="black", size=0.5, alpha=0.9) +
+  geom_boxplot()
+```
+
+#### Logistic regression on age
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ age,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  According to the P-Values and effect size (1.74), the age indicates a clear statistical significance.
 
+Cluster 1 vs Cluster 3
 ```{r}
-boxplot(RNA_clin_data[RNA_clin_data$consensuscluster==1,]$age, RNA_clin_data[RNA_clin_data$consensuscluster==2,]$age)
+model <-
+  glm(
+    formula = consensuscluster ~ age,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
-Patients in the cluster 1 are slightly younger than in the cluster 2.
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ age,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
 
 
-### Chi2 test on age
+#### Chi2 test on age
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
-variable_to_check <- "age_label"
-values_to_check <- unique(RNA_clin_data$age_label)
+variable_to_check <- "age"
+values_to_check <- unique(RNA_clin_data$age)
 values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
 
 for (value in c(values_to_check)) {
-  print(value)
-  # is the row cluster 1 or cluster 2
   cluster1_no <-
     length(which(
       RNA_clin_data[, variable_to_check] == value &
@@ -1477,6 +1748,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1489,12 +1768,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1524,78 +1811,79 @@ for (value in c(values_to_check)) {
 
 ```
 
-Doing the chi2 test on the entire feature
+
+
+### Statistical test: tumor_stage
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "age_label"
-values_to_check <- unique(RNA_clin_data$age_label)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 1), ]$age_label)
-cluster2 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 2), ]$age_label)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"),
-       age_label = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(tumor_stage, na.rm = TRUE),
+    sd = sd(tumor_stage, na.rm = TRUE)
+  )
 ```
 
-
-
-### Logistic regression on  tumor stage
+Bar plot, with each bar representing 100%
 ```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster, 
+           fill = tumor_stage)) + 
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")
+```
+
+#### Logistic regression on tumor stage
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ tumor_stage,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  According to the P-Values, the tumor stage indicates a  statistical significance to differentiate both clusters, but it could be discarted since the effect size is minimal.
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("tumor_stage", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ tumor_stage,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
-No big difference
 
-### Chi2 test on tumor stage
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ tumor_stage,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
+
+
+#### Chi2 test on tumor_stage
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
@@ -1604,8 +1892,6 @@ values_to_check <- unique(RNA_clin_data$tumor_stage)
 values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
 
 for (value in c(values_to_check)) {
-  print(value)
-  # is the row cluster 1 or cluster 2
   cluster1_no <-
     length(which(
       RNA_clin_data[, variable_to_check] == value &
@@ -1618,6 +1904,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1630,12 +1924,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1658,7 +1960,6 @@ for (value in c(values_to_check)) {
     cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
   colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
   
-  
   # we order the resulting matrix by P value
   print(value)
   print(mut_chisq_test)
@@ -1666,77 +1967,79 @@ for (value in c(values_to_check)) {
 
 ```
 
-Doing the chi2 test on the entire feature
+
+### Statistical test: age_at_menarche
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "tumor_stage"
-values_to_check <- unique(RNA_clin_data$tumor_stage)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 1), ]$tumor_stage)
-cluster2 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 2), ]$tumor_stage)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"),
-       tumor_stage = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(age_at_menarche, na.rm = TRUE),
+    sd = sd(age_at_menarche, na.rm = TRUE)
+  )
 ```
 
-
-### Logistic regression on age at menarche
+Boxplot
 ```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster,
+           y = age_at_menarche,
+           fill = age_at_menarche)) + 
+  geom_jitter(color="black", size=0.5, alpha=0.9) +
+  geom_boxplot()
+```
+
+#### Logistic regression on age at menarche
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ age_at_menarche,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  No statistical significance
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("age_at_menarche", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ age_at_menarche,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
-Patients in the cluster 1 are slightly younger than in the cluster 2.
 
-### Chi2 test on age at menarche
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ age_at_menarche,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
+
+
+#### Chi2 test on age_at_menarche
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
@@ -1745,8 +2048,6 @@ values_to_check <- unique(RNA_clin_data$age_at_menarche)
 values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
 
 for (value in c(values_to_check)) {
-  print(value)
-  # is the row cluster 1 or cluster 2
   cluster1_no <-
     length(which(
       RNA_clin_data[, variable_to_check] == value &
@@ -1759,6 +2060,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1771,12 +2080,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1806,85 +2123,88 @@ for (value in c(values_to_check)) {
 
 ```
 
-Doing the chi2 test on the entire feature
+
+
+### Statistical test: tumor_size
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "age_at_menarche"
-values_to_check <- unique(RNA_clin_data$age_at_menarche)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 1), ]$age_at_menarche)
-cluster2 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 2), ]$age_at_menarche)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"),
-       age_at_menarche = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(tumor_size_mm, na.rm = TRUE),
+    sd = sd(tumor_size_mm, na.rm = TRUE)
+  )
 ```
 
-
-### Logistic regression on tumor size
+Boxplot
 ```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster,
+           y = tumor_size_mm,
+           fill = tumor_size_mm)) + 
+  geom_jitter(color="black", size=0.5, alpha=0.9) +
+  geom_boxplot()
+```
+
+#### Logistic regression on age at menarche
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
-    formula = consensuscluster ~ tumor_size,
-    data = RNA_clin_data,
+    formula = consensuscluster ~ tumor_size_mm,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  Statistical significance for when the tumor is between sizes 20 and 39 mm, good effect size.
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("tumor_size", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ tumor_size_mm,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
-### Chi2 test on tumor size
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ tumor_size_mm,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
+
+
+#### Chi2 test on tumor_size_mm
 ```{r}
 ## Saving the possible outcomes of the feature
 mut_chisq_test_names <- c()
-variable_to_check <- "tumor_size"
-values_to_check <- unique(RNA_clin_data$tumor_size)
+variable_to_check <- "tumor_size_mm"
+values_to_check <- unique(RNA_clin_data$tumor_size_mm)
 values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
 
 for (value in c(values_to_check)) {
-  print(value)
-  # is the row cluster 1 or cluster 2
   cluster1_no <-
     length(which(
       RNA_clin_data[, variable_to_check] == value &
@@ -1897,6 +2217,14 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
   cluster1 <-
     length(which(
       RNA_clin_data[, variable_to_check] != value &
@@ -1909,12 +2237,20 @@ for (value in c(values_to_check)) {
         RNA_clin_data[, "consensuscluster"] == 2 &
         is.na(RNA_clin_data[, variable_to_check]) != TRUE
     ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
   
-  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0))
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
   
   
   df$cluster1 <- c(cluster1_no, cluster1)
   df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
   rownames(df) <- c("0", "1")
   
   chisq_test_var <- chisq.test(df, simulate.p.value = T)
@@ -1943,97 +2279,333 @@ for (value in c(values_to_check)) {
 }
 
 ```
-Doing the chi2 test on the entire feature
+
+
+
+
+
+### Statistical test: Survival months and events
+
+Calculate the count, mean and standard deviation of the 3 groups
 ```{r}
-## Saving the possible outcomes of the feature
-mut_chisq_test_names <- c()
-variable_to_check <- "tumor_size"
-values_to_check <- unique(RNA_clin_data$tumor_size)
-values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+library(dplyr)
 
-# is the row cluster 1 or cluster 2
-cluster1 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 1), ]$tumor_size)
-cluster2 <-
-  table(RNA_clin_data[
-    which(RNA_clin_data[, "consensuscluster"] == 2), ]$tumor_size)
-
-clusters_df <-  cbind(cluster1, cluster2)
-clusters_df <- as.table(t(clusters_df))
-dimnames(clusters_df) <-
-  list(cluster = c("1", "2"),
-       tumor_size = c(colnames(clusters_df)))
-
-chisq_test_var <- chisq.test(clusters_df, simulate.p.value = T)
-mut_chisq_test <- c(chisq_test_var$p.value)
-
-## CALCULATING EFFECT SIZE
-# Custom function
-Cramers_V <- function(chi, n, df_es)
-  sqrt((chi) / (n * df_es))
-# Find degrees of freedom - min row or col - 1
-df_es <- min(dim(clusters_df)) - 1
-# Calculate
-effect_size <-
-  Cramers_V(chi = chisq_test_var$statistic,
-            n = sum(clusters_df),
-            df = df_es)
-
-# we save the P values and FDR of each test
-mut_chisq_test <-
-  cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
-colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
-
-# we order the resulting matrix by P value
-print(chisq_test_var)
-print(mut_chisq_test)
-
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(Surv_months, na.rm = TRUE),
+    sd = sd(Surv_months, na.rm = TRUE)
+  )
 ```
 
-
-### Logistic regression on survival times
+Boxplot
 ```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster,
+           y = Surv_months,
+           fill = Surv_months)) + 
+  geom_jitter(color="black", size=0.5, alpha=0.9) +
+  geom_boxplot()
+```
+
+#### Logistic regression on age at menarche
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ Surv_months + Surv_event,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  No statistical significance
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("Surv_event", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ Surv_months + Surv_event,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
 ```
 
-### Logistic regression on Relapse
+Cluster 2 vs Cluster 3
 ```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ Surv_months + Surv_event,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
+
+
+#### Chi2 test on Surv_months
+```{r}
+## Saving the possible outcomes of the feature
+mut_chisq_test_names <- c()
+variable_to_check <- "Surv_months"
+values_to_check <- unique(RNA_clin_data$Surv_months)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for (value in c(values_to_check)) {
+  cluster1_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 1 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster2_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 2 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
+  cluster1 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 1 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster2 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 2 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
+  
+  
+  df$cluster1 <- c(cluster1_no, cluster1)
+  df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
+  rownames(df) <- c("0", "1")
+  
+  chisq_test_var <- chisq.test(df, simulate.p.value = T)
+  mut_chisq_test <- c(chisq_test_var$p.value)
+  
+  ## CALCULATING EFFECT SIZE
+  # Custom function
+  Cramers_V <- function(chi, n, df_es)
+    sqrt((chi) / (n * df_es))
+  # Find degrees of freedom - min row or col - 1
+  df_es <- min(dim(df)) - 1
+  # Calculate
+  effect_size <-
+    Cramers_V(chi = chisq_test_var$statistic,
+              n = sum(df),
+              df = df_es)
+  
+  # we save the P values and FDR of each test
+  mut_chisq_test <-
+    cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
+  colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
+  
+  # we order the resulting matrix by P value
+  print(value)
+  print(mut_chisq_test)
+}
+
+```
+
+
+### Statistical test: Relapse
+
+Calculate the count, mean and standard deviation of the 3 groups
+```{r}
+library(dplyr)
+
+group_by(RNA_clin_data, RNA_clin_data$consensuscluster) %>%
+  summarise(
+    count = n(),
+    mean = mean(Relapse, na.rm = TRUE),
+    sd = sd(Relapse, na.rm = TRUE)
+  )
+```
+
+Calculate the frequencies of each class into each cluster
+```{r}
+temp_table <- table(RNA_clin_data[c("Relapse", "consensuscluster")])
+temp_table
+```
+Calculate the proportion of the total classes frequencies belonging to each cluster
+```{r}
+ftable(round(prop.table(temp_table), 3))
+```
+
+Bar plot, with each bar representing 100%
+```{r}
+ggplot(RNA_clin_data, 
+       aes(x = consensuscluster, 
+           fill = Relapse)) + 
+  geom_bar(position = "fill") +
+  labs(y = "Proportion")
+```
+
+#### Logistic regression on histological grade
+
+Cluster 1 vs Cluster 2
+```{r}
+# Load the package
 library(caTools)
+library(nnet)
 
 #logistic regression model
 model <-
   glm(
     formula = consensuscluster ~ Relapse,
-    data = RNA_clin_data,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=3,],
     family = binomial
   )
 summary(model)
 ```
--  Deviance residuals look good, since they are symmetrical and close to 0
--  No statistical significance
 
+Cluster 1 vs Cluster 3
 ```{r}
-table(RNA_clin_data[c("Relapse", "consensuscluster")])
+model <-
+  glm(
+    formula = consensuscluster ~ Relapse,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=2,],
+    family = binomial
+  )
+summary(model)
+```
+
+Cluster 2 vs Cluster 3
+```{r}
+model <-
+  glm(
+    formula = consensuscluster ~ Relapse,
+    data = RNA_clin_data[RNA_clin_data$consensuscluster!=1,],
+    family = binomial
+  )
+summary(model)
+```
+
+-  Deviance residuals look good, since they are symmetrical and close to 0
+-  According to the P-Values and effect size (1.74), the histological_type == Lobular indicates statistical significance.
+-  Ductal (the intercept) is also statistically significant, but the effect size is low compared to Lobular.
+
+As the cluster 2 has the majority of Lobular patients, we can infer that cluster 2 has normally a higher number of Lobular BC patients compared to cluster 1. 
+
+
+#### Chi2 test on Relapse
+```{r}
+## Saving the possible outcomes of the feature
+mut_chisq_test_names <- c()
+variable_to_check <- "Relapse"
+values_to_check <- unique(RNA_clin_data$Relapse)
+values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
+
+for (value in c(values_to_check)) {
+  cluster1_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 1 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster2_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 2 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster3_no <-
+    length(which(
+      RNA_clin_data[, variable_to_check] == value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  
+  cluster1 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 1 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster2 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 2 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  cluster3 <-
+    length(which(
+      RNA_clin_data[, variable_to_check] != value &
+        RNA_clin_data[, "consensuscluster"] == 3 &
+        is.na(RNA_clin_data[, variable_to_check]) != TRUE
+    ))
+  
+  df <- data.frame(cluster1 = c(0, 0), cluster2 = c(0, 0), cluster3 = c(0, 0))
+  
+  
+  df$cluster1 <- c(cluster1_no, cluster1)
+  df$cluster2 <- c(cluster2_no, cluster2)
+  df$cluster3 <- c(cluster3_no, cluster3)
+  
+  rownames(df) <- c("0", "1")
+  
+  chisq_test_var <- chisq.test(df, simulate.p.value = T)
+  mut_chisq_test <- c(chisq_test_var$p.value)
+  
+  ## CALCULATING EFFECT SIZE
+  # Custom function
+  Cramers_V <- function(chi, n, df_es)
+    sqrt((chi) / (n * df_es))
+  # Find degrees of freedom - min row or col - 1
+  df_es <- min(dim(df)) - 1
+  # Calculate
+  effect_size <-
+    Cramers_V(chi = chisq_test_var$statistic,
+              n = sum(df),
+              df = df_es)
+  
+  # we save the P values and FDR of each test
+  mut_chisq_test <-
+    cbind(mut_chisq_test, p.adjust(mut_chisq_test), effect_size, df_es)
+  colnames(mut_chisq_test) <- c("p_value", "fdr", "effect_size", "DOF")
+  
+  # we order the resulting matrix by P value
+  print(value)
+  print(mut_chisq_test)
+}
+
 ```
 
 
-## Mutations Analysis--------------------------------------------------------
+## Mutations Analysis
 We download the mutations from the available sources 
 
 Ref 2 mutations
@@ -2403,310 +2975,159 @@ colnames(temp) <- c("cluster1", "cluster2")
 temp
 ```
 
-## DEGs (Differentially expressed genes among clusters)----------------------
+## DEGs (Differentially expressed genes among clusters)
+## CIBERSORT*
+- Infiltración de células inmunes
+- Biopsia > Perfil transcriptómico > Proporcion de celulas T en esa biopsia de cancer de mama
+
+ 
+ Calcular xCel > Matriz (fila subtipo celular y col muestra) > relacionar cada una de esas proporciones con el PC1 
+  (TBD)
+## 1. COX (Survival) (DONE)
+Load the libraries
 ```{r}
-library(limma)
-
-design <- model.matrix(~0+RNA_clin_data$consensuscluster)
-design[0:10,]
-```
-
-```{r}
-## the column names are a bit ugly, so we will rename
-colnames(design) <- c("Cluster1","Cluster2")
-design[0:10,]
-```
-
-It has been demonstrated that our power to detect differential expression can be improved if we filter lowly-expressed genes prior to performing the analysis. Quite how one defines a gene being expressed may vary from experiment to experiment, so a cut-off that will work for all datasets is not feasible. Here we consider that aroudn 50% of our genes will not be expressed, and use the median expression level as a cut-off.
-
-```{r}
-RNA_seq_exprs <-
-  RNA_seq_merged_allgenes[which(rownames(RNA_seq_merged_allgenes) != "consensuscluster"), ]
-RNA_seq_exprs <-
-  mutate_all(data.frame(RNA_seq_exprs), function(x)
-    as.numeric(as.character(x)))
-
-summary(RNA_seq_exprs[,0:10])
-
-## calculate median expression level
-temp_median <- apply(RNA_seq_exprs, 2, median)
-cutoff <- median(temp_median)
-
-## TRUE or FALSE for whether each gene is "expressed" in each sample
-is_expressed <- RNA_seq_exprs > cutoff
-
-## Identify genes expressed in more than 2 samples
-
-keep <- rowSums(is_expressed) > 2
-
-## check how many genes are removed / retained.
-table(keep)
-
-## subset to just those expressed genes
-RNA_seq_exprs <- RNA_seq_exprs[keep, ]
-```
-
-The lmFit function is used to fit the model to the data. The result of which is to estimate the expression level in each of the groups that we specified.
-```{r}
-library()
-fit <- limma::lmFit(t(RNA_seq_exprs), design)
-fit$coefficients[0:10,]
-```
-
-In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
-
-```{r}
-contrasts <- makeContrasts(Cluster2 - Cluster1, levels=design)
-
-## can define multiple contrasts
-## e.g. makeContrasts(Group1 - Group2, Group2 - Group3,....levels=design)
-
-fit2 <- contrasts.fit(fit, contrasts)
-```
-
-
-Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
-```{r}
-fit2 <- eBayes(fit2)
-```
-
-We usually get our first look at the results by using the topTable command
-```{r}
-topTable(fit2)
-```
-
-The topTable function automatically displays the results for the first contrast. If you want to see results for other contrasts
-```{r}
-topTable(fit2, coef=1)
-```
-
-If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
-```{r}
-decideTests(fit2)
-```
-
-```{r}
-table(decideTests(fit2))
-```
-
-```{r}
-## calculate relative array weights
-aw <- arrayWeights(t(RNA_seq_exprs), design)
-aw[0:10]
-```
-
-The lmFit function can accept weights, and the rest of the code proceeds as above.
-```{r}
-fit <- lmFit(t(RNA_seq_exprs), design,
-             weights = aw)
-contrasts <- makeContrasts(Cluster1 - Cluster2, levels = design)
-fit2 <- contrasts.fit(fit, contrasts)
-fit2 <- eBayes(fit2)
-table(decideTests(fit2))
-```
-```{r}
-topTable(fit2, coef=1)
-```
-
-
-### Further processing and visualisation of DE results
-At the moment our results are not particularly easy to navigate as the only information to identify each gene is the identifier that the microarray manufacturer has assigned. Fortunately, the GEO entry contains extensive annotation that we can add. The annotation data can be retrieved with the fData function and we restrict to columns we are interested in using select.
-
-For your own data, you will have to choose the columns that are of interest to you. You probably won’t have the same column headings used here.
-
-Once an annotation data frame has been created, it can be assigned to our results.
-```{r}
-full_results <- topTable(fit2, number = Inf)
-full_results <- tibble::rownames_to_column(full_results, "ID")
-```
-
-The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
-
-First we create a data frame that we can visualise in ggplot2. Specifying the number argument to topTable creates a table containing test results from all genes. We also put the probe IDs as a column rather than row names.
-```{r}
-## Make sure you have ggplot2 loaded
+library(survival)
+library(ranger)
 library(ggplot2)
-ggplot(full_results,
-       aes(x = logFC, y = B)) + geom_point()
+library(dplyr)
+library(ggfortify)
 ```
 
-The flexibility of ggplot2 allows us to automatically label points on the plot that might be of interest. For example, genes that meet a particular p-value and log fold-change cut-off. With the code below the values of p_cutoff and fc_cutoff can be changed as desired.
+
+
+## 2. PATHWAYS
+
+First we get the genes set corresponding to the "homo sapiens" specie (human). 
 ```{r}
-## change according to your needs
-p_cutoff <- 0.01
-fc_cutoff <- 1.5
-
-full_results %>%
-  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff) %>%
-  ggplot(aes(x = logFC, y = -log10(P.Value), col = Significant)) + geom_point()
+human_gene_sets = msigdbr(species = "Homo sapiens", category = "H")
+head(human_gene_sets)
 ```
 
-Furthermore, we can label the identity of some genes. Below we set a limit of the top “N” genes we want to label, and label each gene according to it’s Symbol.
+Save the list of all the available gene symbols for the homo sapiens gene set
 ```{r}
-library(ggrepel)
-p_cutoff <- 0.01
-fc_cutoff <- 1.5
-topN <- 20
-
-full_results %>%
-  mutate(Significant = P.Value < p_cutoff, abs(logFC) > fc_cutoff) %>%
-  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
-  ggplot(aes(
-    x = logFC,
-    y = -log10(P.Value),
-    col = Significant,
-    label = Label
-  )) + geom_point() + geom_text_repel(col = "black")
+m_list = human_gene_sets %>% split(x = .$gene_symbol, f = .$gs_name)
+m_list
 ```
 
-We can filter according to p-value (adjusted) and fold-change cut-offs
+Take a look at the first rows of the normalized genes used for the clustering analysis.
 ```{r}
-p_cutoff <- 0.01
-fc_cutoff <- 1.5
-
-filter(full_results, P.Value < p_cutoff)
+head(train_mad)
 ```
 
-We save the results
+Save the gene symbols of the most significantly expressed genes per cluster to explore their pathways.
 ```{r}
-library(readr)
-full_results %>%
-  write_csv(file="complete_DEGs_results_new.csv")
+# Take the previously created matrix and transform to dataframe
+temp_significant_genes <- as.data.frame(temp)
+
+# Filter the genes for cluster 1 
+sign_genes_cluster1 <- row.names(temp_significant_genes)[which(is.na(temp_significant_genes$cluster1))]
+
+# Filter the genes for cluster 2 
+sign_genes_cluster2 <- row.names(temp_significant_genes)[which(is.na(temp_significant_genes$cluster2))]
+
+# Filter the genes for cluster 3
+sign_genes_cluster3 <- row.names(temp_significant_genes)[which(is.na(temp_significant_genes$cluster3))]
 ```
 
-Comparing the differentially expressed genes between both clusters
+Filter the main genes dataframe to include only the genes mainly represented in each cluster.
 ```{r}
-significant_genes <- filter(full_results, P.Value < p_cutoff)$ID
+# Transform the m_list into a vector to perform the intersections
+m_list_vector <-  unlist(m_list)
 
-cc1 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 1])
-cc2 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 2])
+# Cluster 1 gene intersection and filtering
+intersecting_genes_cluster1 <-
+  intersect(m_list_vector, sign_genes_cluster1)
+genes_df_cluster1 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster1, ]
 
-temp <- cbind(cc1[significant_genes], cc2[significant_genes])
+# Cluster 2 gene intersection and filtering
+intersecting_genes_cluster2 <-
+  intersect(m_list_vector, sign_genes_cluster2)
+genes_df_cluster2 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster2, ]
 
-rownames(temp) <- significant_genes
-colnames(temp) <- c("cluster1", "cluster2")
+# Cluster 3 gene intersection and filtering
+intersecting_genes_cluster3 <-
+  intersect(m_list_vector, sign_genes_cluster3)
+genes_df_cluster3 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster3, ]
 
-temp
-```
-
-
-
-### Heatmaps of selected genes
-
-**Most differentially-expressed genes**
-We have already created a table of differential expression results, which is ranked according to statistical significance.
-
-To visualise the most differentially-expressed genes, we first need to extract their ID. These IDs should correspond to rows in the expression matrix.
-
-In the code below we introduce a new column to the results which just gives a row number to each gene. We then filter to return data for the top N results. The pull function is used to extract the ID column as a variable.
-```{r}
-## Use to top 20 genes for illustration
-topN <- 20
-##
-ids_of_interest <- mutate(full_results, Rank = 1:n()) %>%
-  filter(Rank < topN) %>%
-  pull(ID)
-```
-
-In order to label the heatmap in a useful manner we extract the corresponding gene symbols.
-```{r}
-gene_names <- mutate(full_results, Rank = 1:n()) %>% 
-  filter(Rank < topN) %>% 
-  pull(ID) 
-```
-
-The expression values for the IDs we have retrieved can be obtained by using the [..] notation to index the expression matrix.
-```{r}
-## Get the rows corresponding to ids_of_interest and all columns
-gene_matrix <- t(RNA_seq_exprs)[ids_of_interest,]
-```
-
-We now make the heatmap. A default colour scheme is used, but can be changed via the arguments. 
-```{r}
-pheatmap(gene_matrix[,1:20],
-     labels_row = gene_names)
-```
-
-It is often preferable to scale each row to highlight the differences in each gene across the dataset.
-```{r}
-pheatmap(gene_matrix[,1:20],
-     labels_row = gene_names,
-     scale="row")
-```
-
-### GSEA ------
-Gene Set Enrichment Analysis GSEA was tests whether a set of genes of interest, e.g. genes (Subramanian et al. 2005). The software is distributed by the Broad Institute and is freely available for use by academic and non-profit organisations.
-
-In addition to the GSEA software the Broad also provide a number of very well curated gene sets for testing against your data - the Molecular Signatures Database (MSigDB). Unfortunately, these are collections of human genes, however, these lists have been translated to mouse equivalents by the Walter+Eliza Hall Institutes Bioinformatics service and made avaialble for download.
-
-The analysis is performed by:
-
--  ranking all genes in the data set
--  identifying the rank positions of all members of the gene set in the ranked data set
--  calculating an enrichment score (ES) that represents the difference between the observed rankings and that which would be expected assuming a random rank distribution.
-
-```{r}
-library(fgsea)
-```
-
-Create ranks
-Rank all genes based on their fold change. We need to exclude genes for which we do not have Entrez IDs. Also, we should use the shrunk LFC values.
-
-```{r}
-ranks <- full_results$logFC
-names(ranks) <- full_results$ID
-head(ranks)
-```
-
-Plot the ranked fold changes.
-```{r}
-barplot(sort(ranks, decreasing = T))
-```
-
-Load pathways
-```{r}
-library(fgsea)
-```
-
-```{r loadPathways, eval=FALSE}
-load(file="C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Database exploring\\DB compressed files\\mouse_H_v5.RData")
-pathwaysH <- Mm.H
-```
-
-
-Conduct analysis
-```{r}
-fgseaRes <- fgsea(pathwaysH, ranks, minSize=1, maxSize = 10000)
+# All clusters intersection and filtering
+intersecting_genes_all_clusters <-
+  intersect(m_list_vector, c(sign_genes_cluster1, sign_genes_cluster2, sign_genes_cluster3))
+genes_df_all_clusters <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_all_clusters, ]
 ```
 
 ```{r}
-head(fgseaRes)
+# Transform the m_list into a vector to perform the intersections
+m_list_vector <-  unlist(m_list)
+
+# Cluster 1 gene intersection and filtering
+samples_cluster1 <- row.names(RNA_clin_data[RNA_clin_data$consensuscluster == 1,])
+intersecting_genes_cluster1 <-
+  intersect(m_list_vector, sign_genes_cluster1)
+genes_df_cluster1 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster1, samples_cluster1]
+
+# Cluster 2 gene intersection and filtering
+samples_cluster2 <- row.names(RNA_clin_data[RNA_clin_data$consensuscluster == 2,])
+intersecting_genes_cluster2 <-
+  intersect(m_list_vector, sign_genes_cluster2)
+genes_df_cluster2 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster2, samples_cluster2]
+
+# Cluster 3 gene intersection and filtering
+samples_cluster3 <- row.names(RNA_clin_data[RNA_clin_data$consensuscluster == 3,])
+intersecting_genes_cluster3 <-
+  intersect(m_list_vector, sign_genes_cluster3)
+genes_df_cluster3 <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_cluster3, samples_cluster3]
+
+# All clusters intersection and filtering
+intersecting_genes_all_clusters <-
+  intersect(m_list_vector, c(sign_genes_cluster1, sign_genes_cluster2, sign_genes_cluster3))
+genes_df_all_clusters <-
+  train_mad[row.names(train_mad) %in% intersecting_genes_all_clusters, ]
 ```
 
 
-
+Now, lets explore the pathways for each cluster
 ```{r}
-library(hipathia)
-pathways <- hipathia::load_pathways(species = "hsa", pathways_list = c("hsa03320","hsa04012","hsa05224"))
-results <- hipathia(RNA_seq_data, pathways, verbose = TRUE)
+library(msigdbr)
+
+# cluster 1
+hallmarks_ssgsea_cluster1 <- GSVA::gsva(as.matrix(genes_df_cluster1), 
+                               gset.idx.list = m_list, 
+                               method= "ssgsea",
+                               verbose= FALSE)
+# cluster 2
+hallmarks_ssgsea_cluster2 <- GSVA::gsva(as.matrix(genes_df_cluster2), 
+                               gset.idx.list = m_list, 
+                               method= "ssgsea",
+                               verbose= FALSE)
+# cluster 3
+hallmarks_ssgsea_cluster3 <- GSVA::gsva(as.matrix(genes_df_cluster3), 
+                               gset.idx.list = m_list, 
+                               method= "ssgsea",
+                               verbose= FALSE)
+
+# all clusters
+hallmarks_ssgsea_all_clusters <- GSVA::gsva(as.matrix(genes_df_all_clusters), 
+                               gset.idx.list = m_list, 
+                               method= "ssgsea",
+                               verbose= FALSE)
 
 ```
 
-```{r}
-library(BiocSet)
-gmtFile <- system.file(package = "BiocSet",
-                        "extdata",
-                        "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clustering\\Human_MSigdb_May_05_2022_Entrezgene.gmt.txt")
-tbl2 <- BiocSet::import(gmtFile)
-tbl2
-```
-
-```{r}
-from rdflib import Graph
-graph = Graph()
-graph.parse('myfile.ttl', format='ttl')
-```
-
-
+## 3. xCELL 
+- xCell is a webtool that performs cell type enrichment analysis from gene expression data for 64 immune and stroma cell types.
+- xCell is a gene signatures-based method learned from thousands of pure cell types from various sources.
+- calcula un score llamado single sample GSEA, genes marcadores de subtipos marcadores o pathways.
+    - single sample GSEA > GS
+    - Pathways > Hallmark 
+    
+## Next steps
+- Buscar datos de single cell si COX resulta positivo
 
 
