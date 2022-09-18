@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-# Importing the libraries
+# Import the libraries
 options(stringsAsFactors=F)
 library(limma)
 library(sva)
