@@ -487,30 +487,38 @@ for (feature in features_to_engineer) {
       }
     }
     
-  } else if (feature == "days_to_last_followup") {
+  } else if (feature == "days_to_last_followup" || feature == "days_to_death") {
     RNA_clin_data$Surv_event <- NA
-    RNA_clin_data$Surv_months <- NA
+    #RNA_clin_data$Surv_months <- NA
     RNA_clin_data$Surv_days <- NA
     
     for (i in 1:nrow(RNA_clin_data)) {
       if (is.na(RNA_clin_data$days_to_last_followup[i]) != T) {
-        RNA_clin_data$Surv_months[i] <-
-          RNA_clin_data$days_to_last_followup[i] / 30
+        #RNA_clin_data$Surv_months[i] <-
+        #  RNA_clin_data$days_to_last_followup[i] / 30
         RNA_clin_data$Surv_days[i] <-
           RNA_clin_data$days_to_last_followup[i]
-      }
-      if (is.na(RNA_clin_data$survival_months[i]) != T) {
-        RNA_clin_data$Surv_months[i] <- RNA_clin_data$survival_months[i]
-        RNA_clin_data$Surv_days[i] <-
-          RNA_clin_data$survival_months[i] * 30
-      }
-      if (isTRUE(is.na(RNA_clin_data$vital_status[i]) != T) &
-          RNA_clin_data$vital_status[i] %in% c("alive", "Living")) {
         RNA_clin_data$Surv_event[i] <- 0
       }
-      if (isTRUE(is.na(RNA_clin_data$vital_status[i]) != T) &
-          RNA_clin_data$vital_status[i] %in% c("dead", "Died of Disease") == T) {
+      if (is.na(RNA_clin_data$days_to_death[i]) != T) {
+        #RNA_clin_data$Surv_months[i] <-
+        #  RNA_clin_data$days_to_last_followup[i] / 30
+        RNA_clin_data$Surv_days[i] <-
+          RNA_clin_data$days_to_death[i]
         RNA_clin_data$Surv_event[i] <- 1
+      }
+      if (is.na(RNA_clin_data$days_to_last_followup[i]) == T && is.na(RNA_clin_data$days_to_death[i]) == T && is.na(RNA_clin_data$vital_status[i]) != T && is.na(RNA_clin_data$survival_months[i]) != T) {
+        #RNA_clin_data$Surv_months[i] <-
+        #  RNA_clin_data$days_to_last_followup[i] / 30
+        if (is.na(RNA_clin_data$survival_months[i]) != T) {
+          RNA_clin_data$Surv_days[i] <-
+            RNA_clin_data$survival_months[i] / 30
+        }
+        if (RNA_clin_data$vital_status[i] == "alive" || RNA_clin_data$vital_status[i] == "Living") {
+          RNA_clin_data$Surv_event[i] <- 0
+        }else if (RNA_clin_data$vital_status[i] == "dead" || RNA_clin_data$vital_status[i] == "Died of Other Causes" || RNA_clin_data$vital_status[i] == "Died of Disease") {
+          RNA_clin_data$Surv_event[i] <- 1
+        }
       }
     }
   }
@@ -554,7 +562,7 @@ RNA_clin_data <- RNA_clin_data[,!(names(RNA_clin_data) %in% vars_missing_above60
 Generate Data profiling report
 ```{r}
 library(DataExplorer)
-create_report(RNA_clin_data)
+#create_report(RNA_clin_data)
 ```
 
 
@@ -596,8 +604,8 @@ Separate numeric from categorical variables
 ```{r}
 clinical_vars_names <- colnames(RNA_clin_data)
 
-cat_vars_clin <- clinical_vars_names[-c(1,6,14,15,19,21,22)]
-num_vars_clin <- clinical_vars_names[c(1,6,14,15,19,21,22)]
+cat_vars_clin <- clinical_vars_names[-c(1,6,14,15,19,20,21)]
+num_vars_clin <- clinical_vars_names[c(1,6,14,15,19,20,21)]
 ```
 
 ### Feature Scaling
@@ -611,7 +619,6 @@ skewed_vars <-
     "age",
     "relapse_free_months",
     "Surv_days",
-    "Surv_months",
     "survival_months",
     "tumor_size_mm"
   )
@@ -631,7 +638,7 @@ for (variable in skewed_vars) {
 
 Let's run the profiling report once again to verify the skewness of the data is gone.
 ```{r}
-create_report(RNA_clin_data)
+#create_report(RNA_clin_data)
 ```
 Our variables are more normally distributed.
 
@@ -739,6 +746,8 @@ summary(x_train)$importance[3, 1:PCs_to_keep][PCs_to_keep]
 
 Define the annotation data frame with the clinical variables to test
 ```{r}
+library(dplyr)
+
 # Annotation dataframe
 anno_df_m3c <- RNA_clin_data[,clinical_vars_names]
 
@@ -754,19 +763,19 @@ library(dplyr)
 
 # Pass the gene expression data frame to perform consensus clustering
 # Where each row is a PC and each column is a sample.
-res_train <- M3C(
-  data.frame(t(x_train[["x"]][,1:PCs_to_keep])),
-  des = anno_df_m3c,
-  seed = 123,
-  removeplots = TRUE,
-  iters = 50,
-  fsize = 8,
-  lthick = 1,
-  dotsize = 1.25
-)
+#res_train <- M3C(
+#  data.frame(t(x_train[["x"]][,1:PCs_to_keep])),
+#  des = anno_df_m3c,
+#  seed = 123,
+#  removeplots = TRUE,
+#  iters = 50,
+#  fsize = 8,
+#  lthick = 1,
+#  dotsize = 1.25
+#)
 
 # Save the optimal K
-optimal_k_train = max(res_train[["assignments"]])
+#optimal_k_train = max(res_train[["assignments"]])
 
 ```
 
@@ -775,17 +784,17 @@ want to compare with a categorical variable so perform a chi-squared test. We ar
 K=3 is highly significant.
 ```{r}
 
-for (variable in cat_vars_clin[2:10]) {
-  temp_var <- c()
-  for (k in seq(2, 5)) {
-    myresults <- res_train$realdataresults[[k]]$ordered_annotation
-    chifit <-
-      suppressWarnings(chisq.test(table(myresults[c('consensuscluster', variable)])))
-    temp_var <- c(temp_var, round(chifit$p.value, 4))
-  }
-  print(variable)
-  print(temp_var)
-}
+#for (variable in cat_vars_clin[2:10]) {
+#  temp_var <- c()
+# for (k in seq(2, 5)) {
+#    myresults <- res_train$realdataresults[[k]]$ordered_annotation
+#    chifit <-
+#      suppressWarnings(chisq.test(table(myresults[c('consensuscluster', variable)])))
+#    temp_var <- c(temp_var, round(chifit$p.value, 4))
+#  }
+#  print(variable)
+#  print(temp_var)
+#}
 ```
 
 The results of the chi-squared test for the categorical variables of interest indicate that for K=3, the following categorical variables are significant:
@@ -802,6 +811,9 @@ The results of the chi-squared test for the categorical variables of interest in
 #        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_M3C_170922.rds")
 # Restore the object
 res_train <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_M3C_170922.rds")
+
+# Save the optimal K
+optimal_k_train = max(res_train[["assignments"]])
 ```
 
 ### Display the consensus clustering scores for the selected K
@@ -1235,23 +1247,21 @@ The Kaplan–Meier estimator, also known as the product limit estimator, is a no
 library("survminer")
 require("survival")
 
+survival_clin_not_nulls = RNA_clin_data[is.na(RNA_clin_data$Surv_days)!=T & is.na(RNA_clin_data$Surv_event)!=T,c(21,22,23)]
+
 # survival in days
 fit_days <-
-  survfit(Surv(Surv_days, Surv_event) ~ consensuscluster, data = RNA_clin_data)
-# survival in months
-fit_months <-
-  survfit(Surv(Surv_months, Surv_event) ~ consensuscluster, data = RNA_clin_data)
+  survfit(Surv(Surv_days, Surv_event) ~ consensuscluster, data = survival_clin_not_nulls)
 ```
 
-Plot both survival plots
+Plot the survival plot
 ```{r}
 ggsurvplot(fit_days, data = RNA_clin_data)
-ggsurvplot(fit_months, data = RNA_clin_data)
 ```
 
 Look at the statistical information of the monthly survival plot
 ```{r}
-res.sum <- surv_summary(fit_months)
+res.sum <- surv_summary(fit_days)
 res.sum
 ```
 
@@ -1260,11 +1270,12 @@ res.sum
 ```{r}
 # Fit Cox Model
 cox <-
-  coxph(Surv(Surv_months, Surv_event) ~ strata(consensuscluster),
-        data = RNA_clin_data)
+  coxph(Surv(Surv_days, Surv_event) ~ strata(consensuscluster),
+        data = survival_clin_not_nulls)
 
 summary(cox)
 ```
+
 
 ```{r}
 library(simPH)
@@ -1273,10 +1284,10 @@ library(simPH)
 coxFit <- survfit(cox)
 
 # Plot strata in a grid
-ggfitStrata(coxFit, byStrata = TRUE, xlab = "Months")
+ggfitStrata(coxFit, byStrata = TRUE, xlab = "Days")
 
 # Plot all in one
-ggfitStrata(coxFit, byStrata = FALSE, xlab = "Months")
+ggfitStrata(coxFit, byStrata = FALSE, xlab = "Days")
 ```
 
 But is there a more systematic way to look at the different covariates? As you might remember from one of the previous passages, Cox proportional hazards models allow you to include covariates. You can build Cox proportional hazards models using the coxph function and visualize them using the ggforest. These type of plot is called a forest plot. It shows so-called hazard ratios (HR) which are derived from the model for all covariates that we included in the formula in coxph. Briefly, an HR > 1 indicates an increased risk of death (according to the definition of h(t)) if a specific condition is met by a patient. An HR < 1, on the other hand, indicates a decreased risk.
@@ -1286,9 +1297,9 @@ library("survminer")
 library("survival")
 
 # Fit a Cox proportional hazards model
-fit.coxph <- coxph(Surv(Surv_months, Surv_event) ~ consensuscluster, data = RNA_clin_data)
+fit.coxph <- coxph(Surv(Surv_days, Surv_event) ~ consensuscluster, data = survival_clin_not_nulls)
 
-ggforest(fit.coxph, data = RNA_clin_data)
+ggforest(fit.coxph, data = survival_clin_not_nulls)
 ```
 
 ```{r}
@@ -1395,7 +1406,7 @@ chi_squared_clusters <- function(variable_name, clinical_df) {
     # we save the P values and FDR of each test
     mut_chisq_test <-
       cbind(mut_chisq_test,
-            p.adjust(mut_chisq_test),
+            p.adjust(mut_chisq_test, method = 'fdr'),
             effect_size,
             df_es)
     colnames(mut_chisq_test) <-
@@ -1589,38 +1600,6 @@ ggplot(RNA_clin_data_orig, aes(y = relapse_free_months)) +
 
 ```
 For the relapse free months, none of the cluster comparisons show significance, with a mean ranging from ~95-115 months.
-
-Surv_months
-```{r}
-clinical_test(
-  variable_name = "Surv_months",
-  clinical_df =  RNA_clin_data[!is.na(RNA_clin_data[, "Surv_months"]), ],
-  formula = consensuscluster ~ Surv_months,
-  predictor_type = "numerical"
-)
-
-# Undo the feature scaling for easier interpretation of the data
-RNA_clin_data_orig <- RNA_clin_data
-RNA_clin_data_orig$Surv_months <- RNA_clin_data_orig$Surv_months ^ 2
-
-group_by(RNA_clin_data_orig[!is.na(RNA_clin_data_orig[, "Surv_months"]), ], RNA_clin_data[!is.na(RNA_clin_data_orig[, "Surv_months"]), "consensuscluster"]) %>%
-  summarise(
-    count = n(),
-    mean = mean(Surv_months, na.rm = TRUE),
-    sd = sd(Surv_months, na.rm = TRUE)
-  )
-
-ggplot(RNA_clin_data_orig, aes(y = Surv_months)) +
-  geom_boxplot(
-    aes(color = consensuscluster, fill = consensuscluster),
-    bins = 30,
-    alpha = 0.3,
-    outlier.size = 2,
-    outlier.colour = "black"
-  )
-
-```
-For the survival months, the cluster 2 indicates a survival significance against cluster 1 and 2. The cluster 2 is associated with lower survival months (mean of ~72 months), compared to cluster 1 (mean of ~97 months) and cluster 3 (mean of ~103 months).
 
 Surv_days
 ```{r}
@@ -2229,7 +2208,7 @@ for (i in seq(1, k_clusters)) {
 
 We observe the difference in the naming convention of mutations and rna-seq data, as well as the difference in dimensions. We can compare the first 16 characters.
 ```{r}
-raw_brca_rnaseq <- RNA_seq_merged
+raw_brca_rnaseq <- RNA_seq_merged_allgenes
 
 mut_rnaseq_match <- match(gsub(
   pattern = "-",
@@ -2238,12 +2217,12 @@ mut_rnaseq_match <- match(gsub(
 ),
 substr(rownames(raw_brca_rnaseq), 1, 16))
 
-mut_rnaseq_match[0:10]
+#mut_rnaseq_match[0:10]
 ```
 
 Clean the mutation matrix and expression matrix from NA values
 ```{r}
-raw_brca_rnaseq <- t(RNA_seq_merged)
+raw_brca_rnaseq <- t(RNA_seq_merged_allgenes)
 
 # to store the non NA values postitions
 mut_rnaseq_match_nonNA <- which(!is.na(mut_rnaseq_match))
@@ -2289,35 +2268,41 @@ We run a t-test to know which genes change according to the mutations
 ```{r}
 mut_rna_test <- c()
 mut_rna_test_names <- c()
-for (i in 1:nrow(mut_matrix_rna)) {
+mut_rna_test_df <- data.frame()
+for (i in 1:2) {
   # we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
   aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
     # mutation: the mutation row (presence or absence of mutation per gene sequence)
     # exp: the gene row of the rna_mut matrix
-    aux_test <-
-      t.test(
-        formula = exp ~ mut,
-        data = data.frame(mut = mut_matrix_rna[i, ],
-                          exp = as.matrix(rna_mut)[x, ])
-      )
+    temp_df <-  data.frame(mut = mut_matrix_rna[i,],
+                           exp = as.matrix(rna_mut)[x,])
+    temp_df <- na.omit(temp_df)
     
-    
-    aux_test$p.value
+    if (length(temp_df) > 0 && length(unique(temp_df$mut)) == 2) {
+      aux_test <-
+        t.test(
+          formula = exp ~ mut,
+          data = temp_df
+        )$p.value
+      
+      mut_rna_test_names <- paste(rownames(mut_matrix_rna)[i], rownames(rna_mut)[x], sep = "_")
+      row_aux_test <- data.frame(aux_test, row.names = c(mut_rna_test_names))
+
+      #c(aux_test$p.value, rna_mut[x])
+      #c(aux_test$p.value, c(rna_mut[x,]))
+    }
   }))
   
-  # appending each test into a vector
-  mut_rna_test <- c(mut_rna_test, aux_mut_test)
-  # appending each name into a vector
-  mut_rna_test_names <-
-    c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i], rownames(rna_mut),
-                                sep = "_"))
   
+  # appending each test into a vector
+  mut_rna_test_df <- rbind(mut_rna_test_df, t(aux_mut_test))
 }
 
 # we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+#mut_rna_test_unlisted <- unlist(mut_rna_test)
+mut_rna_test <- do.call(rbind.data.frame, mut_rna_test_df$V1)
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test$aux_test, method='fdr'))
 colnames(mut_rna_test) <- c("p_value", "fdr")
-rownames(mut_rna_test) <- mut_rna_test_names
 
 # we order the resulting matrix by P value
 mut_rna_test <- mut_rna_test[order(mut_rna_test[, "p_value"]), ]
@@ -2332,7 +2317,7 @@ mut_rna_test$row_names <- rownames(mut_rna_test)
 
 write.csv(
   as.data.frame(mut_rna_test),
-  "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clustering\\Mutations_merged_T_test.csv",
+  "~\\TNBC_research\\code\\csv_and_objects\\mutations\\Mutations_merged_T_test.csv",
   row.names = FALSE
 )
 ```
@@ -2455,7 +2440,7 @@ for (i in 1:nrow(mut_matrix_rna)) {
 }
 
 # we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
 colnames(mut_rna_test) <- c("p_value", "fdr")
 rownames(mut_rna_test) <- mut_rna_test_names
 
@@ -2505,7 +2490,7 @@ for (i in 1:nrow(mut_matrix_rna)) {
 }
 
 # we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
 colnames(mut_rna_test) <- c("p_value", "fdr")
 rownames(mut_rna_test) <- mut_rna_test_names
 
@@ -2556,7 +2541,7 @@ for (i in 1:nrow(mut_matrix_rna)) {
 }
 
 # we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test))
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
 colnames(mut_rna_test) <- c("p_value", "fdr")
 rownames(mut_rna_test) <- mut_rna_test_names
 
@@ -2620,9 +2605,9 @@ significant_mutations_all <- unique(
   )
 )
 
-cc1 <- colSums(t(mut_matrix_rna_cluster1))
-cc2 <- colSums(t(mut_matrix_rna_cluster2))
-cc3 <- colSums(t(mut_matrix_rna_cluster3))
+cc1 <- colSums(t(mut_matrix_rna_cluster1))/
+cc2 <- colSums(t(mut_matrix_rna_cluster2))/
+cc3 <- colSums(t(mut_matrix_rna_cluster3))/
 
 temp <-
   cbind(cc1[significant_mutations_all], cc2[significant_mutations_all], cc3[significant_mutations_all])
@@ -2702,63 +2687,63 @@ fit$coefficients[1:10, ]
 ```
 
 In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
-
+ 
 ```{r}
-contrasts_c1c2 <- makeContrasts(Cluster1 - Cluster2, levels = design)
-contrasts_c1c3 <-
-  makeContrasts(Cluster1 - Cluster3, levels = design)
-contrasts_c2c3 <-
-  makeContrasts(Cluster2 - Cluster3, levels = design)
+contrasts_c1 <- makeContrasts(Cluster1 - (Cluster2 + Cluster3)/2, levels = design)
+contrasts_c2 <-
+  makeContrasts(Cluster2 - (Cluster1 + Cluster3)/2, levels = design)
+contrasts_c3 <-
+  makeContrasts(Cluster3 - (Cluster1 + Cluster2)/2, levels = design)
 
-fitc1c2 <- contrasts.fit(fit, contrasts_c1c2)
-fitc1c3 <- contrasts.fit(fit, contrasts_c1c3)
-fitc2c3 <- contrasts.fit(fit, contrasts_c2c3)
+fitc1 <- contrasts.fit(fit, contrasts_c1)
+fitc2 <- contrasts.fit(fit, contrasts_c2)
+fitc3 <- contrasts.fit(fit, contrasts_c3)
 ```
 
 
 Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
 ```{r}
-fitc1c2 <- eBayes(fitc1c2)
-fitc1c3 <- eBayes(fitc1c3)
-fitc2c3 <- eBayes(fitc2c3)
+fitc1 <- eBayes(fitc1)
+fitc2 <- eBayes(fitc2)
+fitc3 <- eBayes(fitc3)
 ```
 
 We usually get our first look at the results by using the topTable command
 ```{r}
-topTable(fitc1c2)
+topTable(fitc1)
 ```
 ```{r}
-topTable(fitc1c3)
+topTable(fitc2)
 ```
 ```{r}
-topTable(fitc2c3)
+topTable(fitc3)
 ```
 
 If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
 
-** Cluster1 - Cluster 2
+** Cluster1 vs All
 ```{r}
-decideTests(fitc1c2)
+decideTests(fitc1)
 ```
 ```{r}
-table(decideTests(fitc1c2))
-```
-
-** Cluster1 - Cluster 3
-```{r}
-decideTests(fitc1c3)
-```
-```{r}
-table(decideTests(fitc1c3))
+table(decideTests(fitc1))
 ```
 
-** Cluster2 - Cluster 3
+** Cluster2 vs All
 ```{r}
-decideTests(fitc2c3)
+decideTests(fitc2)
+```
+```{r}
+table(decideTests(fitc2))
+```
+
+** Cluster3 vs All
+```{r}
+decideTests(fitc3)
 ```
 
 ```{r}
-table(decideTests(fitc2c3))
+table(decideTests(fitc3))
 ```
 
 ### Further processing and visualisation of DE results
@@ -2768,14 +2753,14 @@ For your own data, you will have to choose the columns that are of interest to y
 
 Once an annotation data frame has been created, it can be assigned to our results.
 ```{r}
-full_resultsc1c2 <- topTable(fitc1c2, number = Inf)
-full_resultsc1c2 <- tibble::rownames_to_column(full_resultsc1c2, "ID")
+full_resultsc1 <- topTable(fitc1, number = Inf)
+full_resultsc1 <- tibble::rownames_to_column(full_resultsc1, "ID")
 
-full_resultsc1c3 <- topTable(fitc1c3, number = Inf)
-full_resultsc1c3 <- tibble::rownames_to_column(full_resultsc1c3, "ID")
+full_resultsc2 <- topTable(fitc2, number = Inf)
+full_resultsc2 <- tibble::rownames_to_column(full_resultsc2, "ID")
 
-full_resultsc2c3 <- topTable(fitc2c3, number = Inf)
-full_resultsc2c3 <- tibble::rownames_to_column(full_resultsc2c3, "ID")
+full_resultsc3 <- topTable(fitc3, number = Inf)
+full_resultsc3 <- tibble::rownames_to_column(full_resultsc3, "ID")
 ```
 
 The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
@@ -2795,9 +2780,9 @@ fc_cutoff <- 1.5
 topN <- 20
 ```
 
-Cluster 1 vs Cluster 2
+Cluster 1 vs All
 ```{r}
-full_resultsc1c2 %>%
+full_resultsc1 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2808,9 +2793,9 @@ full_resultsc1c2 %>%
   )) + geom_point() + geom_text_repel(col = "black")
 ```
 
-Cluster 1 vs Cluster 3
+Cluster 2 vs All
 ```{r}
-full_resultsc1c3 %>%
+full_resultsc2 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2821,9 +2806,9 @@ full_resultsc1c3 %>%
   )) + geom_point() + geom_text_repel(col = "black")
 ```
 
-Cluster 2 vs Cluster 3
+Cluster 3 vs All
 ```{r}
-full_resultsc2c3 %>%
+full_resultsc3 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2836,28 +2821,28 @@ full_resultsc2c3 %>%
 
 We can filter according to p-value (adjusted) and fold-change cut-offs
 ```{r}
-sign_genes_c1c2 <- filter(full_resultsc1c2, adj.P.Val < p_cutoff)
-sign_genes_c1c3 <- filter(full_resultsc1c3, adj.P.Val < p_cutoff)
-sign_genes_c2c3 <- filter(full_resultsc2c3, adj.P.Val < p_cutoff)
+sign_genes_c1 <- filter(full_resultsc1, adj.P.Val < p_cutoff)
+sign_genes_c2 <- filter(full_resultsc2, adj.P.Val < p_cutoff)
+sign_genes_c3 <- filter(full_resultsc3, adj.P.Val < p_cutoff)
 ```
 
 We save the results
 ```{r}
 library(readr)
-full_resultsc1c2 %>%
-  write_csv(file="complete_DEGs_results_c1c2_18_sep_22.csv")
+full_resultsc1 %>%
+  write_csv(file="complete_DEGs_results_c1_18_sep_22.csv")
 
-full_resultsc1c3 %>%
-  write_csv(file="complete_DEGs_results_c1c3_18_sep_22.csv")
+full_resultsc2 %>%
+  write_csv(file="complete_DEGs_results_c2_18_sep_22.csv")
 
-full_resultsc2c3 %>%
-  write_csv(file="complete_DEGs_results_c2c3_18_sep_22.csv")
+full_resultsc3 %>%
+  write_csv(file="complete_DEGs_results_c3_18_sep_22.csv")
 ```
 
 
 Comparing the diferentially expressed genes between all the clusters
 ```{r}
-significant_genes <- filter(full_resultsc1c2, p.adjust(P.Value, method="fdr") < p_cutoff)$ID
+significant_genes <- filter(full_resultsc1, p.adjust(P.Value, method="fdr") < p_cutoff)$ID
 
 cc1 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 1])
 cc2 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 2])
@@ -2885,26 +2870,26 @@ In the code below we introduce a new column to the results which just gives a ro
 topN <- 20
 
 ##
-ids_of_interest12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>%
+ids_of_interest1 <- mutate(full_resultsc1, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
-ids_of_interest13 <- mutate(full_resultsc1c3, Rank = 1:n()) %>%
+ids_of_interest2 <- mutate(full_resultsc2, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
-ids_of_interest23 <- mutate(full_resultsc2c3, Rank = 1:n()) %>%
+ids_of_interest3 <- mutate(full_resultsc3, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
 ```
 
 In order to label the heatmap in a useful manner we extract the corresponding gene symbols.
 ```{r}
-gene_names12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>% 
+gene_names1 <- mutate(full_resultsc1, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
-gene_names13 <- mutate(full_resultsc1c3, Rank = 1:n()) %>% 
+gene_names2 <- mutate(full_resultsc2, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
-gene_names23 <- mutate(full_resultsc2c3, Rank = 1:n()) %>% 
+gene_names3 <- mutate(full_resultsc3, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
 ```
@@ -2912,25 +2897,25 @@ gene_names23 <- mutate(full_resultsc2c3, Rank = 1:n()) %>%
 The expression values for the IDs we have retrieved can be obtained by using the [..] notation to index the expression matrix.
 ```{r}
 ## Get the rows corresponding to ids_of_interest and all columns
-gene_matrix12 <- t(RNA_seq_exprs)[ids_of_interest12,]
-gene_matrix13 <- t(RNA_seq_exprs)[ids_of_interest13,]
-gene_matrix23 <- t(RNA_seq_exprs)[ids_of_interest23,]
+gene_matrix1 <- t(RNA_seq_exprs)[ids_of_interest1,]
+gene_matrix2 <- t(RNA_seq_exprs)[ids_of_interest2,]
+gene_matrix3 <- t(RNA_seq_exprs)[ids_of_interest3,]
 ```
 
 We now make the heatmap. A default colour scheme is used, but can be changed via the arguments. 
 ```{r}
-pheatmap(gene_matrix12[,1:20],
-     labels_row = gene_names,
+pheatmap(gene_matrix1[,1:20],
+     labels_row = gene_names1,
      scale="row")
 ```
 ```{r}
-pheatmap(gene_matrix13[,1:20],
-     labels_row = gene_names,
+pheatmap(gene_matrix2[,1:20],
+     labels_row = gene_names2,
      scale="row")
 ```
 ```{r}
-pheatmap(gene_matrix23[,1:20],
-     labels_row = gene_names,
+pheatmap(gene_matrix3[,1:20],
+     labels_row = gene_names3,
      scale="row")
 ```
 ## PATHWAYS
