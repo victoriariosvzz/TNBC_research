@@ -15,23 +15,28 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ***
 
-## Import Data
+## Import Libraries
 
 Avoid strings being recognized as factors and import libraries used in the next chunks of code.
 ```{r}
 options(stringsAsFactors = F)
 
+# Import packages libraries
 library(factoextra)
 library(M3C)
 library(plyr)
+library(dplyr)
+
+# Import local functions
+source("~/TNBC_Research/code/general_functions.R")
 ```
 
-### Expression data
+## Import Data
 
+### Expression data
 Import resulting data frames containing gene expression data (previously normalized with log2 and batch effect assessed by ComBat), where each column is a sample and each row a gene.
 
 characteristic      | train | train_mad 
-----------------------------------------
 rows (genes)        | 10856 | 2648   
 columns (samples)   | 509   | 509
 
@@ -43,16 +48,16 @@ train <-
 train_mad <-
   read.csv("~/TNBC_Research/code/csv_and_objects/ComBat/ComBat_mad.csv",
            row.names = "row.names")
-```
 
-Observe the first records of the gene expression data frame
-```{r}
+# Load the validation files containing the validation dataframes
+load("~/TNBC_Research/data/db_files/Validation/TNBC_validation_dataset.RData")
+
+# Observe the first records of the gene expression data frame
 head(train_mad)
 ```
 
 
 ### Clinical data
-
 Import the clinical information data frame that matches with the samples found in the genetic information data frame imported in the previous chunks of code (specifically "train_mad").
 ```{r}
 # Read the csv file with the clinical information
@@ -64,12 +69,48 @@ RNA_clin_data <-
 
 # Set ID as a new column (this will be used in the Consensus Clustering section of the analysis)
 RNA_clin_data$ID <- row.names(RNA_clin_data)
-```
 
-Observe the first records of the clinical information data frame
-```{r}
+# Observe the first records of the clinical information data frame
 head(RNA_clin_data)
 ```
+
+### Validation data cleaning and transformation
+```{r}
+head(gse142258_clin)
+head(gse142731_clin)
+head(gse163882_clin)
+
+# Transforming
+gse142258_clin <- t(gse142258_clin)
+gse142258_clin <- as.data.frame(gse142258_clin)
+gse142258_clin["Sample_description"] <- lapply(gse142258_clin["Sample_description"], gsub, pattern = "-", replacement = ".")
+row.names(gse142258_clin) <- gse142258_clin$Sample_description
+gse142258_clin$ID <- row.names(gse142258_clin)
+gse142258_clin$source_db <- "gse142258"
+
+gse142731_clin <- t(gse142731_clin)
+gse142731_clin <- as.data.frame(gse142731_clin)
+row.names(gse142731_clin) <- gse142731_clin$Sample_description
+gse142731_clin$ID <- row.names(gse142731_clin)
+gse142731_clin$source_db <- "gse142731"
+
+gse163882_clin <- t(gse163882_clin)
+gse163882_clin <- as.data.frame(gse163882_clin)
+gse163882_clin$Age <- gse163882_clin$AGE
+# Remove columns using select()
+gse163882_clin <- gse163882_clin %>% 
+  select(-c(AGE))
+row.names(gse163882_clin) <- lapply(gse163882_clin["Sample_title"], gsub, pattern = "\\:.*", replacement = "")$Sample_title
+gse163882_clin$ID <- row.names(gse163882_clin)
+gse163882_clin$source_db <- "gse163882"
+
+
+# Merging the dataframes
+RNA_clin_data_val <- merge(gse142258_clin, gse142731_clin, all = TRUE)
+RNA_clin_data_val <- merge(RNA_clin_data_val, gse163882_clin, all = TRUE)
+row.names(RNA_clin_data_val) <- RNA_clin_data_val$ID
+```
+
 
 Verify the shapes of the imported data frames.
 ```{r}
@@ -87,7 +128,6 @@ glue("RNA_clin_data -> rows(samples): {nrow(RNA_clin_data)}, columns(clinical va
 ### Clean Data
 
 Once we have the data, we need to ensure that it is in a format that we can use to create a model or perform statistical tests.
-
 ```{r}
 # Format for the expression data
 str(train_mad[,1:5])
@@ -140,400 +180,17 @@ features_to_engineer <- c("histological_type",
                           "relapse_free_status"
                           )
 
-# Define a loop to go over each feature and make the classes compliant
-for (feature in features_to_engineer) {
-  
-  # Display the unique values of the raw features
-  print(unique(RNA_clin_data[feature]))
-  
-  if (feature == "histological_type") {
-    RNA_clin_data$histological_type <-
-      mapvalues(RNA_clin_data$histological_type,
-                c("Mixed (not specified)", "Not specified"),
-                c("Mixed", NA))
-  } else if (feature == "histological_grade") {
-    RNA_clin_data$histological_grade <-
-      mapvalues(
-        RNA_clin_data$histological_grade,
-        c(
-          "UNKNOWN",
-          "N/A",
-          "Unknown",
-          "II-III",
-          "I LOW GRADE (WELL DIFFERENTIATED)",
-          "3",
-          "2",
-          "1"
-        ),
-        c(NA, NA, NA, 2, 1, 3, 2, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$histological_grade <- as.factor(RNA_clin_data$histological_grade)
-    
-  } else if (feature == "chemotherapy") {
-    RNA_clin_data$chemotherapy <-
-      mapvalues(
-        RNA_clin_data$chemotherapy,
-        c(
-          "Doxorubicin",
-          "Paclitaxel",
-          "Adriamicin",
-          "N/A",
-          "Epirubicin",
-          "NO",
-          "YES"
-        ),
-        c(1, 1, 1, NA, 1, 0, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$chemotherapy <- as.factor(RNA_clin_data$chemotherapy)
-    
-  } else if (feature == "histological_grade") {
-    RNA_clin_data$histological_grade <-
-      mapvalues(
-        RNA_clin_data$histological_grade,
-        c(
-          "1",
-          "2",
-          "3"
-        ),
-        c(1, 2, 3)
-      )
-    
-    # Change to factor
-    RNA_clin_data$histological_grade <- as.factor(RNA_clin_data$histological_grade)
-    
-  } else if (feature == "tabaquism") {
-    RNA_clin_data$tabaquism <-
-      mapvalues(
-        RNA_clin_data$tabaquism,
-        c(
-          "Neg",
-          "Pos"
-        ),
-        c(0, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$tabaquism <- as.factor(RNA_clin_data$tabaquism)
-    
-  } else if (feature == "hispanic") {
-    RNA_clin_data$hispanic <-
-      mapvalues(
-        RNA_clin_data$hispanic,
-        c(
-          "NO",
-          "YES"
-        ),
-        c(0, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$hispanic <- as.factor(RNA_clin_data$hispanic)
-    
-  } else if (feature == "Relapse") {
-    RNA_clin_data$Relapse <-
-      mapvalues(
-        RNA_clin_data$Relapse,
-        c(
-          "TRUE",
-          "FALSE"
-        ),
-        c(1, 0)
-      )
-    
-    # Change to factor
-    RNA_clin_data$Relapse <- as.factor(RNA_clin_data$Relapse)
-    
-  } else if (feature == "TNBC_status") {
-    RNA_clin_data$TNBC_status <-
-      mapvalues(
-        RNA_clin_data$TNBC_status,
-        c(
-          TRUE,
-          FALSE
-        ),
-        c(1, 0)
-      )
-    
-    # Change to factor
-    RNA_clin_data$TNBC_status <- as.factor(RNA_clin_data$TNBC_status)
-    
-  } else if (feature == "pathological_history") {
-    RNA_clin_data$pathological_history <-
-      mapvalues(
-        RNA_clin_data$pathological_history,
-        c(
-          "Neg",
-          "Hypothyroidism",
-          "Diabetes",
-          "Ocular Surgery",
-          "3 C sections",
-          "Hysterechtomy",
-          "Hypertension and Diabetes"
-        ),
-        c(0, 1, 1, 1, 1, 1, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$pathological_history <- as.factor(RNA_clin_data$pathological_history)
-    
-  } else if (feature == "family_pathological_hsitory") {
-    RNA_clin_data$family_pathological_hsitory <-
-      mapvalues(
-        RNA_clin_data$family_pathological_hsitory,
-        c(
-          "Neg",
-          "Maternal Aunt Breast Cancer",                                                                           
-          "Diabetes",                                                                                              
-          "Liver Cancer",                                                                                          
-          "Father Pancreas Cancer. Maternal Aunt Breast Cancer. Father Aunts Ovarian Cancer. Cousin Breast Cancer",
-          "Father Laringeal Cancer",                                                                               
-          "Fater Liver Cancer",                                                                                    
-          "Mother and Sister Ovarian Cancer"   
-        ),
-        c(0, 1, 1, 1, 1, 1, 1, 1)
-      )
-    
-    # Change to factor
-    RNA_clin_data$family_pathological_hsitory <- as.factor(RNA_clin_data$family_pathological_hsitory)
-    
-  } else if (feature == "radiotherapy") {
-    RNA_clin_data$radiotherapy <-
-      mapvalues(
-        RNA_clin_data$radiotherapy,
-        c(
-          "Yes",
-          "No",
-          "N/A",
-          "NO",
-          "YES"
-        ),
-        c(1, 0, NA, 0, 1)
-      )
-    # Change to factor
-    RNA_clin_data$radiotherapy <- as.factor(RNA_clin_data$radiotherapy)
-    
-  } else if (feature == "hormone_therapy") {
-    RNA_clin_data$hormone_therapy <-
-      mapvalues(
-        RNA_clin_data$hormone_therapy,
-        c(
-          "NO",
-          "YES"
-        ),
-        c(0, 1)
-      )
-    # Change to factor
-    RNA_clin_data$hormone_therapy <- as.factor(RNA_clin_data$hormone_therapy)
-    
-  } else if (feature == "methastasis") {
-    RNA_clin_data$methastasis <-
-      mapvalues(
-        RNA_clin_data$methastasis,
-        c(
-          "no",
-          "yes",
-          "0",
-          "1"
-        ),
-        c(0, 1, 0, 1)
-      )
-    # Change to factor
-    RNA_clin_data$methastasis <- as.factor(RNA_clin_data$methastasis)
-    
-  } else if (feature == "relapse_free_status") {
-    RNA_clin_data$relapse_free_status <-
-      mapvalues(
-        RNA_clin_data$relapse_free_status,
-        c(
-          "0:Not Recurred",
-          "1:Recurred"
-        ),
-        c(0, 1)
-      )
-    # Change to numeric
-    RNA_clin_data$relapse_free_status <- as.numeric(RNA_clin_data$relapse_free_status)
-  
-  } else if (feature == "tumor_stage") {
-    RNA_clin_data$tumor_stage <-
-      mapvalues(
-        RNA_clin_data$tumor_stage,
-        c(
-          "N/A",
-          "UNKNOWN",
-          "3B",
-          "2B",
-          "1",
-          "2",
-          "3",
-          "4"
-        ),
-        c(NA, NA, 3, 2, 1, 2, 3, 4)
-      )
-    # Change to factor
-    RNA_clin_data$tumor_stage <- as.factor(RNA_clin_data$tumor_stage)
-    
-  } else if (feature == "race") {
-    RNA_clin_data$race <-
-      mapvalues(
-        RNA_clin_data$race,
-        c(
-          "W",
-          "B",
-          "H",
-          "UNKNOWN",
-          "WHITE",
-          "BLACK OR AFRICAN AMERICAN",
-          "OTHER"
-        ),
-        c(
-          "white",
-          "african american",
-          "hispanic or latino",
-          NA,
-          "white",
-          "african american",
-          NA
-        )
-      )
-  } else if (feature == "age") {
-    
-    # Change age to numeric
-    RNA_clin_data$age <- as.numeric(RNA_clin_data$age)
-    
-    # Add a new variant of the age as ranges
-    RNA_clin_data$age_label <- RNA_clin_data$age
-    
-    for (age_row in 1:nrow(RNA_clin_data)) {
-      if (is.na(RNA_clin_data[age_row, "age"]) == FALSE) {
-        if (RNA_clin_data[age_row, "age"] < 40) {
-          RNA_clin_data[age_row, "age_label"] <- "30s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 40 &
-            RNA_clin_data[age_row, "age"] < 50) {
-          RNA_clin_data[age_row, "age_label"] <- "40s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 50 &
-            RNA_clin_data[age_row, "age"] < 60) {
-          RNA_clin_data[age_row, "age_label"] <- "50s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 60 &
-            RNA_clin_data[age_row, "age"] < 70) {
-          RNA_clin_data[age_row, "age_label"] <- "60s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 70 &
-            RNA_clin_data[age_row, "age"] < 80) {
-          RNA_clin_data[age_row, "age_label"] <- "70s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 80 &
-            RNA_clin_data[age_row, "age"] < 90) {
-          RNA_clin_data[age_row, "age_label"] <- "80s"
-        }
-        if (RNA_clin_data[age_row, "age"] >= 90) {
-          RNA_clin_data[age_row, "age_label"] <- "90s"
-        }
-      }
-    }
-  } else if (feature == "tumor_size_mm") {
-    
-    # Change tumor size to numeric
-    RNA_clin_data$tumor_size_mm <- as.numeric(RNA_clin_data$tumor_size_mm)
-    # Add a new variant of the tumor size as ranges
-    RNA_clin_data$tumor_size <- RNA_clin_data$tumor_size_mm
-    
-    for (age_row in 1:nrow(RNA_clin_data)) {
-      if (is.na(RNA_clin_data[age_row, "tumor_size_mm"]) == FALSE) {
-        if (RNA_clin_data[age_row, "tumor_size_mm"] < 10) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Below 10 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 10 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 20) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 10 and 19 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 20 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 30) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 20 and 29 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 30 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 40) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 30 and 39 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 40 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 50) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 40 and 49 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 50 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 60) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 50 and 59 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 60 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 70) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 60 and 69 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 70 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 80) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 70 and 79 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 80 &
-            RNA_clin_data[age_row, "tumor_size_mm"] < 90) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Between 80 and 89 mm"
-        }
-        if (RNA_clin_data[age_row, "tumor_size_mm"] >= 90) {
-          RNA_clin_data[age_row, "tumor_size"] <- "Greater than 89 mm"
-        }
-      }
-    }
-    
-  } else if (feature == "days_to_last_followup" || feature == "days_to_death") {
-    RNA_clin_data$Surv_event <- NA
-    #RNA_clin_data$Surv_months <- NA
-    RNA_clin_data$Surv_days <- NA
-    
-    for (i in 1:nrow(RNA_clin_data)) {
-      if (is.na(RNA_clin_data$days_to_last_followup[i]) != T) {
-        #RNA_clin_data$Surv_months[i] <-
-        #  RNA_clin_data$days_to_last_followup[i] / 30
-        RNA_clin_data$Surv_days[i] <-
-          RNA_clin_data$days_to_last_followup[i]
-        RNA_clin_data$Surv_event[i] <- 0
-      }
-      if (is.na(RNA_clin_data$days_to_death[i]) != T) {
-        #RNA_clin_data$Surv_months[i] <-
-        #  RNA_clin_data$days_to_last_followup[i] / 30
-        RNA_clin_data$Surv_days[i] <-
-          RNA_clin_data$days_to_death[i]
-        RNA_clin_data$Surv_event[i] <- 1
-      }
-      if (is.na(RNA_clin_data$days_to_last_followup[i]) == T && is.na(RNA_clin_data$days_to_death[i]) == T && is.na(RNA_clin_data$vital_status[i]) != T && is.na(RNA_clin_data$survival_months[i]) != T) {
-        #RNA_clin_data$Surv_months[i] <-
-        #  RNA_clin_data$days_to_last_followup[i] / 30
-        if (is.na(RNA_clin_data$survival_months[i]) != T) {
-          RNA_clin_data$Surv_days[i] <-
-            RNA_clin_data$survival_months[i] / 30
-        }
-        if (RNA_clin_data$vital_status[i] == "alive" || RNA_clin_data$vital_status[i] == "Living") {
-          RNA_clin_data$Surv_event[i] <- 0
-        }else if (RNA_clin_data$vital_status[i] == "dead" || RNA_clin_data$vital_status[i] == "Died of Other Causes" || RNA_clin_data$vital_status[i] == "Died of Disease") {
-          RNA_clin_data$Surv_event[i] <- 1
-        }
-      }
-    }
-  }
-  
-  # Display the unique values of the engineered features
-  print(unique(RNA_clin_data[feature]))
-}
+features_to_engineer_val <- c("Age",
+                              "Stage",
+                              "Race"
+                              )
 
-RNA_clin_data <- RNA_clin_data[,!(names(RNA_clin_data) %in% c("last_known_alive"))]
+# Transform the clinical variables to be compliant and homogeneous
+RNA_clin_data <- feature_engineering_clinical_custom(RNA_clin_data, features_to_engineer)
+RNA_clin_data_val <- feature_engineering_clinical_custom(RNA_clin_data_val, features_to_engineer_val)
 
-RNA_clin_data$relapse_free_status <- as.factor(RNA_clin_data$relapse_free_status)
-
-```
-```{r}
 head(RNA_clin_data)
+head(RNA_clin_data_val)
 ```
 
 
@@ -546,23 +203,31 @@ library(mde)
 
 # Get a report of the missing variables per column
 missing_summary <- na_summary(RNA_clin_data, sort_by = "percent_missing")
+missing_summary_val <- na_summary(RNA_clin_data_val, sort_by = "percent_missing")
 missing_summary
-```
-```{r}
-# Saving the names of the variables with missing values above 60
-vars_missing_above60 <- as.vector(missing_summary[missing_summary$percent_missing>=60,]$variable)
-vars_missing_above60
+missing_summary_val
 ```
 
-Drop the variables with above 60% missing data
+
 ```{r}
-RNA_clin_data <- RNA_clin_data[,!(names(RNA_clin_data) %in% vars_missing_above60)]
+# Saving the names of the variables with missing values above 75
+vars_missing_above75 <- as.vector(missing_summary[missing_summary$percent_missing>=75,]$variable)
+vars_missing_above75_val <- as.vector(missing_summary_val[missing_summary_val$percent_missing>=75,]$variable)
+vars_missing_above75
+vars_missing_above75_val
+```
+
+Drop the variables with above 75% missing data
+```{r}
+RNA_clin_data <- RNA_clin_data[,!(names(RNA_clin_data) %in% vars_missing_above75)]
+RNA_clin_data_val <- RNA_clin_data_val[,!(names(RNA_clin_data_val) %in% c(vars_missing_above75_val, "Sample_geo_accession", "Response", "Sample_title", "Sample_description"))]
 ```
 
 Generate Data profiling report
 ```{r}
 library(DataExplorer)
-#create_report(RNA_clin_data)
+create_report(RNA_clin_data)
+create_report(RNA_clin_data_val)
 ```
 
 
@@ -573,25 +238,14 @@ Print the dimensions of the clinical data set to verify if the plot will correct
 dim(RNA_clin_data)
 ```
 
-List the missing values per column
-```{r}
-# Load the library
-library(mde)
-
-# Get a report of the missing variables per column
-na_summary(RNA_clin_data, sort_by = "percent_missing")
-
-```
-The clinical variables that present <60% of missing values, we specially focus on these clinical variables for the statistical tests and correlation with the clusters resulting from the analysis.
-
-Taking that into account, there is a total of 20 clinical variables to plot for a better understanding of the distribution of the missing values in the clinical data.
-
+Taking that into account, that is the quantity of clinical variables to plot for a better understanding of the distribution of the missing values in the clinical data.
 ```{r}
 # Load the library for visualization
 library(naniar)
 
 # Plot the first half of the data
 vis_miss(RNA_clin_data, sort_miss = T)
+vis_miss(RNA_clin_data_val, sort_miss = T)
 ```
 Most of the missing values seem to be aligned to similar samples, giving an indicator of being tied to the data source, which is acceptable as long as the resulting clusters are not influenced by the data source.
 
@@ -603,45 +257,13 @@ sapply(RNA_clin_data, class)
 Separate numeric from categorical variables
 ```{r}
 clinical_vars_names <- colnames(RNA_clin_data)
+clinical_vars_names_val <- colnames(RNA_clin_data_val)
 
-cat_vars_clin <- clinical_vars_names[-c(1,6,14,15,19,20,21)]
-num_vars_clin <- clinical_vars_names[c(1,6,14,15,19,20,21)]
+cat_vars_clin <- names(RNA_clin_data)[sapply(RNA_clin_data, is.character)]
+cat_vars_clin_val <- names(RNA_clin_data_val)[sapply(RNA_clin_data_val, is.character)]
+num_vars_clin <- c(names(RNA_clin_data)[sapply(RNA_clin_data, is.factor)], names(RNA_clin_data)[sapply(RNA_clin_data, is.numeric)]) 
+num_vars_clin_val <- c(names(RNA_clin_data_val)[sapply(RNA_clin_data_val, is.factor)], names(RNA_clin_data_val)[sapply(RNA_clin_data_val, is.numeric)]) 
 ```
-
-### Feature Scaling
-
-As seen in the data profiling report, most of the data is skewed or non-normally distributed. Feature scaling is necessary to more accurate statistical results.
-```{r}
-library(caret)
-
-skewed_vars <-
-  c(
-    "age",
-    "relapse_free_months",
-    "Surv_days",
-    "survival_months",
-    "tumor_size_mm"
-  )
-
-for (variable in skewed_vars) {
-  print(RNA_clin_data[1:5, variable])
-  
-  RNA_clin_data[, variable] <- sqrt( RNA_clin_data[, variable])
-  
-  hist(RNA_clin_data[,variable])
-  
-  print(RNA_clin_data[1:5, variable])
-}
-```
-
-
-
-Let's run the profiling report once again to verify the skewness of the data is gone.
-```{r}
-#create_report(RNA_clin_data)
-```
-Our variables are more normally distributed.
-
 
 ***
 
@@ -654,19 +276,32 @@ To compute a PCA in R we use the prcomp() function. This function takes a matrix
 
 In this case, we look for similarities across our patients (samples = rows) based on gene expression (variables = columns). For that reason, we provide a transposed version of our table to the prcomp() function as shown in the cell below:
 ```{r}
+val_mad <- tnbc_validation_dataset
+
 t(train_mad)[1:10,1:10]
+t(val_mad)[1:10,1:10]
 ```
+
+Before proceeding with the numerical analysis, we remove the outlier sample (BA00439)
+```{r}
+val_mad <- val_mad[,!colnames(val_mad) %in% c("BA00439")]
+RNA_clin_data_val <- RNA_clin_data_val[!row.names(RNA_clin_data_val) %in% c("BA00439"),]
+```
+
 
 Pass the transposed expression dataframe to the prcomp() function, so each row represents a sample and each column a gene.
 ```{r}
 # Principal components analysis
 x_train <- prcomp(t(train_mad), scale = T)
+x_val <- prcomp(t(val_mad), scale = T)
 ```
 
 Visualize eigenvalues (scree plot) to show the percentage of data variance explained by each principal component. We target to keep ~75-85% of the variance from the original dataset.
 ```{r}
 scree_plot <- fviz_eig(x_train, addlabels=TRUE)
+scree_plot_val <- fviz_eig(x_val, addlabels=TRUE)
 scree_plot
+scree_plot_val
 ```
 As seen in the plot, we are not able to get the desired variance percentage even after adding up the first 2 Principal Components (PCs), therefore, more than 2 PCs are used for model training. On the other side, only two PCs are used to visualize the data points in a reader-friendly manner (Note: It is also possible to visualize the data in 3 dimensions if required to add an additional level of explainability to the graph).
 
@@ -677,6 +312,17 @@ Plot the first two PCs to visualize the results of the dimensionality reduction 
 # Plot the PCA
 fviz_pca_ind(
   x_train,
+  col.ind = "cos2",
+  # Color by the quality of representation
+  gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+  repel = T,
+  # Avoid text overlapping,
+  max.overlaps = Inf
+)
+
+# Plot the PCA
+fviz_pca_ind(
+  x_val,
   col.ind = "cos2",
   # Color by the quality of representation
   gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
@@ -736,10 +382,11 @@ Choose the number of components that will represent ~85% of the variance of the 
 ```{r}
 # Define a variable with the PCs to keep
 PCs_to_keep = 285
+PCs_to_keep_val = 78
 
 # Print the cumulative explained variance of a range of PCs
 summary(x_train)$importance[3, 1:PCs_to_keep][PCs_to_keep]
-
+summary(x_val)$importance[3, 1:PCs_to_keep_val][PCs_to_keep_val]
 ```
 
 ### Consensus Clustering with PAC score as objective function
@@ -750,10 +397,34 @@ library(dplyr)
 
 # Annotation dataframe
 anno_df_m3c <- RNA_clin_data[,clinical_vars_names]
+anno_df_m3c_val <- RNA_clin_data_val[,clinical_vars_names_val]
+
+anno_df_m3c_val$ID <-
+  mapvalues(
+    anno_df_m3c_val$ID,
+    c(
+      "AICK.046.(13.006)",
+      "AICK.050.(13.551)",
+      "AICK.066.(13.2538)",
+      "AICK.097.(14.2320)"
+    ),
+    c(
+      "AICK.046..13.006.",
+      "AICK.050..13.551.",
+      "AICK.066..13.2538.",
+      "AICK.097..14.2320."
+    )
+  )
+
+row.names(anno_df_m3c_val) <- anno_df_m3c_val$ID
 
 # Change gene expression data type to numeric
 x_train[["x"]] <-
   mutate_all(as.data.frame(x_train[["x"]]), function(x)
+    as.numeric(as.character(x)))
+
+x_val[["x"]] <-
+  mutate_all(as.data.frame(x_val[["x"]]), function(x)
     as.numeric(as.character(x)))
 ```
 
@@ -763,20 +434,31 @@ library(dplyr)
 
 # Pass the gene expression data frame to perform consensus clustering
 # Where each row is a PC and each column is a sample.
-#res_train <- M3C(
-#  data.frame(t(x_train[["x"]][,1:PCs_to_keep])),
-#  des = anno_df_m3c,
-#  seed = 123,
-#  removeplots = TRUE,
-#  iters = 50,
-#  fsize = 8,
-#  lthick = 1,
-#  dotsize = 1.25
-#)
+res_train <- M3C(
+  data.frame(t(x_train[["x"]][,1:PCs_to_keep])),
+  des = anno_df_m3c,
+  seed = 123,
+  removeplots = TRUE,
+  iters = 50,
+  fsize = 8,
+  lthick = 1,
+  dotsize = 1.25
+)
+
+res_val <- M3C(
+  data.frame(t(x_val[["x"]][,1:PCs_to_keep_val])),
+  des = anno_df_m3c_val,
+  seed = 123,
+  removeplots = TRUE,
+  iters = 50,
+  fsize = 8,
+  lthick = 1,
+  dotsize = 1.25
+)
 
 # Save the optimal K
-#optimal_k_train = max(res_train[["assignments"]])
-
+optimal_k_train = max(res_train[["assignments"]])
+optimal_k_val = max(res_val[["assignments"]])
 ```
 
 Also important is the relationship between the clinical variables and the discovered clusters. In this data we
@@ -784,18 +466,31 @@ want to compare with a categorical variable so perform a chi-squared test. We ar
 K=3 is highly significant.
 ```{r}
 
-#for (variable in cat_vars_clin[2:10]) {
-#  temp_var <- c()
-# for (k in seq(2, 5)) {
-#    myresults <- res_train$realdataresults[[k]]$ordered_annotation
-#    chifit <-
-#      suppressWarnings(chisq.test(table(myresults[c('consensuscluster', variable)])))
-#    temp_var <- c(temp_var, round(chifit$p.value, 4))
-#  }
-#  print(variable)
-#  print(temp_var)
-#}
+for (variable in cat_vars_clin[2:10]) {
+  temp_var <- c()
+  for (k in seq(2, 5)) {
+    myresults <- res_train$realdataresults[[k]]$ordered_annotation
+    chifit <-
+      suppressWarnings(chisq.test(table(myresults[c('consensuscluster', variable)])))
+    temp_var <- c(temp_var, round(chifit$p.value, 4))
+  }
+  print(variable)
+  print(temp_var)
+}
+
+for (variable in cat_vars_clin_val[2:10]) {
+  temp_var <- c()
+  for (k in seq(2, 5)) {
+    myresults <- res_val$realdataresults[[k]]$ordered_annotation
+    chifit <-
+      suppressWarnings(chisq.test(table(myresults[c('consensuscluster', variable)])))
+    temp_var <- c(temp_var, round(chifit$p.value, 4))
+  }
+  print(variable)
+  print(temp_var)
+}
 ```
+
 
 The results of the chi-squared test for the categorical variables of interest indicate that for K=3, the following categorical variables are significant:
 - histological_type
@@ -809,11 +504,11 @@ The results of the chi-squared test for the categorical variables of interest in
 ## Uncomment to save the result object to a local file
 #saveRDS(res_train,
 #        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_M3C_170922.rds")
+saveRDS(res_val,
+        file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_val_M3C_171122.rds")
 # Restore the object
 res_train <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_M3C_170922.rds")
-
-# Save the optimal K
-optimal_k_train = max(res_train[["assignments"]])
+res_val <- readRDS(file = "~/TNBC_Research/code/csv_and_objects/clustering/consensus_clustering_val_M3C_171122.rds")
 ```
 
 ### Display the consensus clustering scores for the selected K
@@ -822,6 +517,7 @@ The scores and p values for the PAC score objective function are contained withi
 ```{r}
 # Consensus clustering scores
 res_train$scores
+res_val$scores
 ```
 
 The stability index (RCSI) is the highest for K=3, as well as it being associated with the lowest P scores, which confirms the consensus clustering selection. 
@@ -834,6 +530,7 @@ In the CDF and following PAC plot we can see the inherent bias of consensus clus
 
 ```{r}
 res_train$plots[[1]]
+res_val$plots[[1]]
 ```
 The line starts flattening or stabilizing at K=3. Showing the performance of an optimal K.
 
@@ -844,6 +541,7 @@ This figure below shows the PAC score, we can see an elbow at K = 3 which is sug
 
 ```{r}
 res_train$plots[[2]]
+res_val$plots[[2]]
 ```
 
 **3. Relative Cluster Stability Index (RCSI)**
@@ -852,6 +550,7 @@ The Relative Cluster Stability Index (RCSI) was derived and associated 95% confi
 
 ```{r}
 res_train$plots[[3]]
+res_val$plots[[3]]
 ```
 
 **4. P score**
@@ -859,6 +558,7 @@ res_train$plots[[3]]
 Calculate the P score from the distribution, here we display the P scores from the beta distribution. If none of the P scores reach significance over a reasonable range of K (e.g. 10), then we accept the null hypothesis. In this dataset, we can see K = 3 reaches signficance with an alpha of 0.05, therefore we can reject the null hypothesis K=1.
 ```{r}
 res_train$plots[[3]]
+res_val$plots[[3]]
 ```
 
 After the analysis, we can be convinced that there are 3 clusters within this data set which are not likely to have
@@ -874,27 +574,43 @@ Gather the RNA-seq data and clinical data from the clustering results as differe
 # RNA-seq data and cluster annotation
 RNA_seq_data <-
   res_train$realdataresults[[optimal_k_train]][["ordered_data"]]
+RNA_seq_data_val <-
+  res_val$realdataresults[[optimal_k_val]][["ordered_data"]]
 RNA_seq_cluster_annotation <-
   res_train$realdataresults[[optimal_k_train]][["ordered_annotation"]]
+RNA_seq_cluster_annotation_val <-
+  res_val$realdataresults[[optimal_k_val]][["ordered_annotation"]]
 
 # Joining expression and cluster annotation
 RNA_seq_merged <-
   as.data.frame(t(rbind(
     RNA_seq_data, t(RNA_seq_cluster_annotation)
   )))
+RNA_seq_merged_val <-
+  as.data.frame(t(rbind(
+    RNA_seq_data_val, t(RNA_seq_cluster_annotation_val)
+  )))
 
 RNA_seq_merged_allgenes <-
   as.data.frame(merge(t(train_mad), RNA_seq_cluster_annotation, by = "row.names"))
+RNA_seq_merged_allgenes_val <-
+  as.data.frame(merge(t(val_mad), RNA_seq_cluster_annotation_val, by = "row.names"))
 rownames(RNA_seq_merged_allgenes) <-
   RNA_seq_merged_allgenes$Row.names
+rownames(RNA_seq_merged_allgenes_val) <-
+  RNA_seq_merged_allgenes_val$Row.names
 
 RNA_seq_merged_allgenes = subset(RNA_seq_merged_allgenes, select = -c(`Row.names`))
+RNA_seq_merged_allgenes_val = subset(RNA_seq_merged_allgenes_val, select = -c(`Row.names`))
 
 # Clinical data
 RNA_clin_data <-
   merge(RNA_clin_data, RNA_seq_cluster_annotation, by = "row.names")
+RNA_clin_data_val <-
+  merge(RNA_clin_data_val, RNA_seq_cluster_annotation_val, by = "row.names")
 
 rownames(RNA_clin_data) <- RNA_clin_data$Row.names
+rownames(RNA_clin_data_val) <- RNA_clin_data_val$Row.names
 ```
 
 Remove any possible duplicate column
@@ -909,90 +625,49 @@ RNA_clin_data <- RNA_clin_data %>%
   select_at(
     vars(-ends_with(".y"))
   )
+
+RNA_clin_data_val <- RNA_clin_data_val %>% 
+  rename_at(
+    vars(ends_with(".x")),
+    ~str_replace(., "\\..$","")
+  ) %>% 
+  select_at(
+    vars(-ends_with(".y"))
+  )
 ```
 
 
 Save the results of the 3 clusters in a set of variables
 ```{r}
-k_clusters_train = 3
-
+# Training
 data_train <-
-  res_train$realdataresults[[k_clusters_train]]$ordered_data
+  res_train$realdataresults[[optimal_k_train]]$ordered_data
 annon_train <-
-  res_train$realdataresults[[k_clusters_train]]$ordered_annotation
+  res_train$realdataresults[[optimal_k_train]]$ordered_annotation
 ccmatrix_train <-
-  res_train$realdataresults[[k_clusters_train]]$consensus_matrix
+  res_train$realdataresults[[optimal_k_train]]$consensus_matrix
+
+# Validation
+data_val <-
+  res_val$realdataresults[[optimal_k_val]]$ordered_data
+annon_val <-
+  res_val$realdataresults[[optimal_k_val]]$ordered_annotation
+ccmatrix_val <-
+  res_val$realdataresults[[optimal_k_val]]$consensus_matrix
 ```
 
 Consensus matrix heatmaps from M3C output with ComplexHeatmap.
 ```{r}
 library(ComplexHeatmap)
 
-ccl <- list()
-ha_row <- list()
-x <- c(
-  "skyblue",
-  "gold",
-  "violet",
-  "darkorchid",
-  "slateblue",
-  "forestgreen",
-  "violetred",
-  "orange",
-  "midnightblue",
-  "grey31",
-  "black"
-)
-
-names(x) <- as.character(seq(1, 11, by = 1))
-for (i in seq(2, k_clusters_train)) {
-  # get cc matrix and labels
-  ccmatrix <- res_train$realdataresults[[i]]$consensus_matrix
-  db_source <- as.data.frame(RNA_clin_data[
-                c(rownames(res_train$realdataresults[[i]]$ordered_annotation)),
-                  "source_db"])
-  rownames(db_source) <-
-    c(rownames(res_train$realdataresults[[i]]$ordered_annotation))
-  colnames(db_source) <- c("db_source")
-  annon <- res_train$realdataresults[[i]]$ordered_annotation
-  
-  # do heatmap
-  n <- 10
-  seq <- rev(seq(0, 255,
-                 by = 255 / (n)))
-  palRGB <- cbind(seq,
-                  seq, 255)
-  mypal <- rgb(palRGB,
-               maxColorValue = 255)
-  ha = HeatmapAnnotation(
-    df = data.frame(Cluster = as.character(annon[, 1])),
-    Source = as.character(db_source[, 1]),
-    col = list(
-      Cluster = x,
-      Source = c(
-        "TCGA_RNAseq" = "green",
-        "Ref2_RNAseq" = "red",
-        "RefGSE20271_Array" = "blue",
-        "RefGSE575678_Array" = "pink",
-        "Ref4_RNAseq" = "yellow"
-      )
-    )
-  )
-  ccl[[i]] <- Heatmap(
-    ccmatrix,
-    name = "Consensus_index",
-    top_annotation = ha,
-    col = mypal,
-    show_row_dend = FALSE,
-    show_column_dend = FALSE,
-    cluster_rows = FALSE,
-    cluster_columns = FALSE,
-    show_column_names = FALSE
-  )
-}
-
+ccl <- consensus_complex_heatmap(res_train, optimal_k_train)
 print(ccl)
 ```
+```{r}
+ccl_val <- consensus_complex_heatmap(res_val, 3)
+print(ccl_val)
+```
+
 From looking at the heatmap, we can discard that the clustering was biased by the batch effect of the data sources.
 
 **K-means clustering**
@@ -1000,7 +675,10 @@ We proceed to apply a K-means clustering procedure on the PCA selected component
 ```{r}
 set.seed(100)
 k_train <- kmeans(x_train[["x"]][,1:PCs_to_keep],
-                  centers = k_clusters_train
+                  centers = optimal_k_train
+                  )
+k_val <- kmeans(x_val[["x"]][,1:PCs_to_keep_val],
+                  centers = optimal_k_val
                   )
 ```
 
@@ -1010,6 +688,11 @@ We plot the resulting clusters
 x_train$cluster <- factor(k_train$cluster)
 eigenvalue <- round(get_eigenvalue(x_train), 1)
 variance.percent_train <- eigenvalue$variance.percent
+
+# Add clusters obtained using the K-means algorithm for validation
+x_val$cluster <- factor(k_val$cluster)
+eigenvalue_val <- round(get_eigenvalue(x_val), 1)
+variance.percent_val <- eigenvalue_val$variance.percent
 ```
 
 ```{r}
@@ -1017,6 +700,7 @@ library(ggpubr)
 library(dplyr)
 
 temp <- do.call("cbind", list(x_train[["x"]][,1:PCs_to_keep],as.data.frame(x_train$cluster)))
+temp_val <- do.call("cbind", list(x_val[["x"]][,1:PCs_to_keep_val],as.data.frame(x_val$cluster)))
 
 ggscatter(
   temp,
@@ -1033,213 +717,52 @@ ggscatter(
   ylab = paste0("Dim 2 (", variance.percent_train[2], "% )")
 ) +
   stat_mean(aes(color = `x_train$cluster`), size = 4)
+
+ggscatter(
+  temp_val,
+  x = "PC1",
+  y = "PC2",
+  color = "x_val$cluster",
+  palette = "npg",
+  ellipse = TRUE,
+  ellipse.type = "convex",
+  size = 1.5,
+  legend = "right",
+  ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
+  ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
+) +
+  stat_mean(aes(color = `x_val$cluster`), size = 4)
 ```
 
 ```{r}
 # setting the data frames in a list
 list_of_data = list(temp, RNA_clin_data)
+list_of_data_val = list(temp_val, RNA_clin_data_val)
 
 # this will get the intersection of the row.names for everything in the list
 common_names = Reduce(intersect, lapply(list_of_data, row.names))
+common_names_val = Reduce(intersect, lapply(list_of_data_val, row.names))
 common_names
+common_names_val
 ```
 
 By looking at the previous plot, we confirm (once again), that the clustering was not biased due to the difference in data sources and gene expression techniques.
 
 ## Clinical data visualization per cluster
-
-We split the clinical data in cluster 1, cluster 2 and cluster 3
-```{r}
-clin_data1 <-
-  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 1),]
-clin_data2 <-
-  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 2),]
-clin_data3 <-
-  RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 3),]
-```
-
 ### Plotting categorical and numeric variables per cluster
-
-Counts
 ```{r}
 library(glue)
+library(ggplot2)
 
-for (vars in clinical_vars_names) {
-  var1 <- as.data.frame(table(clin_data1[vars]))
-  cluster_info <- as.data.frame(rep("1",
-                                    nrow(var1)))
-  var1 <- cbind(cluster_info,
-                var1)
-  colnames(var1) <- c("cluster_info",
-                      "variable",
-                      "count")
-  
-  
-  var2 <- as.data.frame(table(clin_data2[vars]))
-  cluster_info <- as.data.frame(rep("2",
-                                    nrow(var2)))
-  var2 <- cbind(cluster_info, var2)
-  colnames(var2) <- c("cluster_info",
-                      "variable",
-                      "count")
-  
-  var3 <- as.data.frame(table(clin_data3[vars]))
-  cluster_info <- as.data.frame(rep("3",
-                                    nrow(var3)))
-  var3 <- cbind(cluster_info, var3)
-  colnames(var3) <- c("cluster_info",
-                      "variable",
-                      "count")
-  
-  
-  merged_df <- rbind(var1,
-                     var2,
-                     var3)
-  merged_df
-  
-  ## PLOTS
-  library(ggplot2)
-  
-  # Grouped barcharts
-  plt <- ggplot(merged_df,
-                aes(x = cluster_info,
-                    y = count,
-                    fill = variable)) +
-    geom_bar(position = "dodge",
-             stat = "identity")+ 
-      stat_compare_means()+
-      labs(title = as.character(vars))
-  
-  if (vars %in% c("age",
-                  "tumor_size_mm",
-                  "age_at_menarche",
-                  "Surv_months")) {
-    merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
-                       clin_data2[c("consensuscluster", vars)],
-                       clin_data3[c("consensuscluster", vars)])
-    colnames(merged_df) <- c("consensuscluster",
-                             "vars")
-    
-    plt <- ggboxplot(merged_df, 
-                  x="consensuscluster",
-                  y="vars",
-                  color = "consensuscluster",
-                  ggtheme = theme_gray(),
-                  add='jitter') +
-                  stat_compare_means() +
-                  labs(title = as.character(vars)) +
-                  xlab("Cluster") + ylab(vars)
-                  
-  }
-  
-  print(plt)
-}
-
+clinical_plots(RNA_clin_data, clinical_vars_names, "counts", 3)
 ```
 
-Percentages
 ```{r}
-library(glue)
-
-for (vars in clinical_vars_names) {
-  var1 <- as.data.frame(table(clin_data1[vars]))
-  cluster_info <- as.data.frame(rep("1",
-                                    nrow(var1)))
-  var1 <- cbind(cluster_info,
-                var1)
-  
-  var1_perc <- var1
-  var1_perc$Freq <-  (var1$Freq/sum(var1$Freq))
-  
-  colnames(var1) <- c("cluster_info",
-                      "variable",
-                      "count")
-  colnames(var1_perc) <- c("cluster_info",
-                      "variable",
-                      "percentage")
-  
-  
-  var2 <- as.data.frame(table(clin_data2[vars]))
-  cluster_info <- as.data.frame(rep("2",
-                                    nrow(var2)))
-  var2 <- cbind(cluster_info, var2)
-  
-  var2_perc <- var2
-  var2_perc$Freq <-  (var2$Freq/sum(var2$Freq))
-  
-  colnames(var2) <- c("cluster_info",
-                      "variable",
-                      "count")
-  colnames(var2_perc) <- c("cluster_info",
-                      "variable",
-                      "percentage")
-  
-  
-  var3 <- as.data.frame(table(clin_data3[vars]))
-  cluster_info <- as.data.frame(rep("3",
-                                    nrow(var3)))
-  var3 <- cbind(cluster_info, var3)
-  
-  var3_perc <- var3
-  var3_perc$Freq <-  (var3$Freq/sum(var3$Freq))
-  
-  colnames(var3) <- c("cluster_info",
-                      "variable",
-                      "count")
-  colnames(var3_perc) <- c("cluster_info",
-                      "variable",
-                      "percentage")
-  
-  
-  merged_df <- rbind(var1_perc,
-                     var2_perc,
-                     var3_perc)
-  
-  merged_df
-  
-  ## PLOTS
-  library(ggplot2)
-  
-  # Grouped barcharts
-  plt <- ggplot(merged_df,
-                aes(x = cluster_info,
-                    y = percentage,
-                    fill = variable)) +
-    geom_bar(position = "dodge",
-             stat = "identity")+ 
-      stat_compare_means()+
-      labs(title = as.character(vars)) + scale_y_continuous(labels = scales::percent)
-  
-  if (vars %in% c("age",
-                  "tumor_size_mm",
-                  "age_at_menarche",
-                  "Surv_months")) {
-    merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
-                       clin_data2[c("consensuscluster", vars)],
-                       clin_data3[c("consensuscluster", vars)])
-    colnames(merged_df) <- c("consensuscluster",
-                             "vars")
-    
-    plt <- ggboxplot(merged_df, 
-                  x="consensuscluster",
-                  y="vars",
-                  color = "consensuscluster",
-                  ggtheme = theme_gray(),
-                  add='jitter') +
-                  stat_compare_means() +
-                  labs(title = as.character(vars)) +
-                  xlab("Cluster") + ylab(vars)
-                  
-  }
-  
-  print(plt)
-}
-
+clinical_plots(RNA_clin_data_val, clinical_vars_names_val, "counts", 2)
 ```
-
 
 ## SURVIVAL PLOT
-
 ### Survival curves from Kaplan-Meier analysis
 
 The Kaplan–Meier estimator, also known as the product limit estimator, is a non-parametric statistic used to estimate the survival function from lifetime data. In medical research, it is often used to measure the fraction of patients living for a certain amount of time after treatment.
@@ -1247,7 +770,7 @@ The Kaplan–Meier estimator, also known as the product limit estimator, is a no
 library("survminer")
 require("survival")
 
-survival_clin_not_nulls = RNA_clin_data[is.na(RNA_clin_data$Surv_days)!=T & is.na(RNA_clin_data$Surv_event)!=T,c(21,22,23)]
+survival_clin_not_nulls = RNA_clin_data[is.na(RNA_clin_data$Surv_days)!=T & is.na(RNA_clin_data$Surv_event)!=T,c(25,26,27)]
 
 # survival in days
 fit_days <-
@@ -1306,13 +829,12 @@ ggforest(fit.coxph, data = survival_clin_not_nulls)
 summary(fit.coxph)
 ```
 
-TODO try excluding the samples that are intercluster
-
 ## Significance tests on clinical information
 
 Take a look at the clinical data
 ```{r}
 RNA_clin_data[0:10, clinical_vars_names] 
+RNA_clin_data_val[0:10, clinical_vars_names_val] 
 ```
 
 ## Statistical tests on clinical data
@@ -1321,187 +843,7 @@ RNA_clin_data[0:10, clinical_vars_names]
 library(RcmdrMisc)
 ```
 
-**Functions for statistical tests**
-
-Function to perform chi-squared test for the categorical variables of the clusters and identify which labels are significant.
-```{r}
-chi_squared_clusters <- function(variable_name, clinical_df) {
-  ## Saving the possible outcomes of the feature
-  mut_chisq_test_names <- c()
-  variable_to_check <- variable_name
-  values_to_check <- unique(clinical_df[,variable_name])
-  values_to_check <- values_to_check[is.na(values_to_check) != TRUE]
-  
-  final_results <- c()
-  
-  for (value in c(values_to_check)) {
-    cluster1_no <-
-      length(which(
-        clinical_df[, variable_to_check] == value &
-          clinical_df[, "consensuscluster"] == 1 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    cluster2_no <-
-      length(which(
-        clinical_df[, variable_to_check] == value &
-          clinical_df[, "consensuscluster"] == 2 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    cluster3_no <-
-      length(which(
-        clinical_df[, variable_to_check] == value &
-          clinical_df[, "consensuscluster"] == 3 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    
-    
-    cluster1 <-
-      length(which(
-        clinical_df[, variable_to_check] != value &
-          clinical_df[, "consensuscluster"] == 1 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    cluster2 <-
-      length(which(
-        clinical_df[, variable_to_check] != value &
-          clinical_df[, "consensuscluster"] == 2 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    cluster3 <-
-      length(which(
-        clinical_df[, variable_to_check] != value &
-          clinical_df[, "consensuscluster"] == 3 &
-          is.na(clinical_df[, variable_to_check]) != TRUE
-      ))
-    
-    df <-
-      data.frame(
-        cluster1 = c(0, 0),
-        cluster2 = c(0, 0),
-        cluster3 = c(0, 0)
-      )
-    
-    
-    df$cluster1 <- c(cluster1_no, cluster1)
-    df$cluster2 <- c(cluster2_no, cluster2)
-    df$cluster3 <- c(cluster3_no, cluster3)
-    
-    rownames(df) <- c("0", "1")
-    
-    chisq_test_var <- chisq.test(df, simulate.p.value = T)
-    mut_chisq_test <- c(chisq_test_var$p.value)
-    
-    ## CALCULATING EFFECT SIZE
-    # Custom function
-    Cramers_V <- function(chi, n, df_es)
-      sqrt((chi) / (n * df_es))
-    # Find degrees of freedom - min row or col - 1
-    df_es <- min(dim(df)) - 1
-    # Calculate
-    effect_size <-
-      Cramers_V(chi = chisq_test_var$statistic,
-                n = sum(df),
-                df = df_es)
-    
-    # we save the P values and FDR of each test
-    mut_chisq_test <-
-      cbind(mut_chisq_test,
-            p.adjust(mut_chisq_test, method = 'fdr'),
-            effect_size,
-            df_es)
-    colnames(mut_chisq_test) <-
-      c("p_value", "fdr", "effect_size", "DOF")
-    
-    # we order the resulting matrix by P value
-    if (mut_chisq_test[1]<0.05) {
-      final_results[[value]] <- mut_chisq_test
-    }
-  }
-  return(final_results)
-}
-```
-
-Function to perform the Kruskal-Wallis test on the categorical variables and get a global value of significance. At the same time, the chi-square function is run to understand which labels are the most significant.
-```{r}
-categorical_kruskal_wallis_test <-
-  function(variable_name, clinical_df, formula) {
-    print(variable_name)
-    print("---")
-    print("Calculating the frequencies per cluster...")
-    # Calculate the frequencies of each class into each cluster
-    temp_table <-
-      table(clinical_df[c(variable_name, "consensuscluster")])
-    
-    # counts
-    print("counts")
-    print(temp_table)
-    
-    # percentage
-    print("percentages")
-    print(colPercents(temp_table, 2))
-    
-    # --------------
-    # Kruskal-Wallis test (is the variable significant?)
-    kruskal_wallis_general <-
-      kruskal.test(formula, data = clinical_df)
-    print(kruskal_wallis_general)
-    
-    # Chi-squared test
-    chisq_test_res <-
-      chi_squared_clusters(variable_name, clinical_df)
-    
-    return(chisq_test_res)
-  }
-```
-
-Function to perform logistic regression on the numeric variables and return the significance of each pair of clusters variables.
-```{r}
-clinical_test <-
-  function(variable_name,
-           clinical_df,
-           formula,
-           predictor_type) {
-    print(variable_name)
-    print("---")
-    print("Running logistic regression per each cluster combination...")
-    
-    # Removing rows with missing values
-    clinical_df_nonull <-
-      clinical_df[!is.na(clinical_df[, variable_name]),]
-    
-    # Logistic regression on each possible cluster combination
-    significant_excluding <- c()
-    for (cluster in 1:3) {
-      model <-
-        glm(formula = formula,
-            data = clinical_df_nonull[clinical_df_nonull$consensuscluster != cluster, ],
-            family = binomial)
-      significant_excluding[[as.numeric(cluster)]] <-
-        cbind(summary(model)$coeff[-1, 4], summary(model)$coeff[-1, 4] < 0.05)
-    }
-    print(significant_excluding)
-    if (predictor_type == "categorical") {
-      print("Running Kruskal Wallis test and Chi-square test for independence...")
-      categorical_kruskal_wallis_test(
-        variable_name = variable_name,
-        clinical_df = clinical_df_nonull,
-        formula = formula
-      )
-    }
-    else if (predictor_type == "numerical") {
-      print("Running ANOVA test...")
-      
-      aov_variable <-
-        aov(clinical_df_nonull[, variable_name] ~ clinical_df_nonull$consensuscluster)
-      print(variable_name)
-      print(summary(aov_variable))
-    }
-  }
-```
-
-
 **Numeric variables**
-
 Running the statistical tests for the numerical variables
 
 Age
@@ -1510,30 +852,19 @@ clinical_test(
   variable_name = "age",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ age,
-  predictor_type = "numerical"
+  predictor_type = "numerical",
+  3
 )
 
-# Undo the feature scaling for easier interpretation of the data
-RNA_clin_data_orig <- RNA_clin_data
-RNA_clin_data_orig$age <- RNA_clin_data_orig$age ^ 2
-
-group_by(RNA_clin_data_orig[!is.na(RNA_clin_data_orig[, "age"]), ], RNA_clin_data[!is.na(RNA_clin_data_orig[, "age"]), "consensuscluster"]) %>%
-  summarise(
-    count = n(),
-    mean = mean(age, na.rm = TRUE),
-    sd = sd(age, na.rm = TRUE)
-  )
-
-ggplot(RNA_clin_data_orig, aes(y = age)) +
-  geom_boxplot(
-    aes(color = consensuscluster, fill = consensuscluster),
-    bins = 30,
-    alpha = 0.3,
-    outlier.size = 2,
-    outlier.colour = "black"
-  )
-
+clinical_test(
+  variable_name = "Age",
+  clinical_df =  RNA_clin_data_val,
+  formula = consensuscluster ~ Age,
+  predictor_type = "numerical",
+  2
+)
 ```
+
 For the age, the cluster 1 is significant compared to the other two clusters, including younger people (mean age ~52) compared to cluster 2 and 3 (mean age ~55).
 
 Tumor size mm
@@ -1542,29 +873,9 @@ clinical_test(
   variable_name = "tumor_size_mm",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ tumor_size_mm,
-  predictor_type = "numerical"
+  predictor_type = "numerical",
+  3
 )
-
-# Undo the feature scaling for easier interpretation of the data
-RNA_clin_data_orig <- RNA_clin_data
-RNA_clin_data_orig$tumor_size_mm <- RNA_clin_data_orig$tumor_size_mm ^ 2
-
-group_by(RNA_clin_data_orig[!is.na(RNA_clin_data_orig[, "tumor_size_mm"]), ], RNA_clin_data[!is.na(RNA_clin_data_orig[, "tumor_size_mm"]), "consensuscluster"]) %>%
-  summarise(
-    count = n(),
-    mean = mean(tumor_size_mm, na.rm = TRUE),
-    sd = sd(tumor_size_mm, na.rm = TRUE)
-  )
-
-ggplot(RNA_clin_data_orig, aes(y = tumor_size_mm)) +
-  geom_boxplot(
-    aes(color = consensuscluster, fill = consensuscluster),
-    bins = 30,
-    alpha = 0.3,
-    outlier.size = 2,
-    outlier.colour = "black"
-  )
-
 ```
 For the tumor size in mm, none of the cluster comparisons show significance, with all of the means ranging between ~25-30 mm.
 
@@ -1575,29 +886,9 @@ clinical_test(
   variable_name = "relapse_free_months",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ relapse_free_months,
-  predictor_type = "numerical"
+  predictor_type = "numerical",
+  3
 )
-
-# Undo the feature scaling for easier interpretation of the data
-RNA_clin_data_orig <- RNA_clin_data
-RNA_clin_data_orig$relapse_free_months <- RNA_clin_data_orig$relapse_free_months ^ 2
-
-group_by(RNA_clin_data_orig[!is.na(RNA_clin_data_orig[, "relapse_free_months"]), ], RNA_clin_data[!is.na(RNA_clin_data_orig[, "relapse_free_months"]), "consensuscluster"]) %>%
-  summarise(
-    count = n(),
-    mean = mean(relapse_free_months, na.rm = TRUE),
-    sd = sd(relapse_free_months, na.rm = TRUE)
-  )
-
-ggplot(RNA_clin_data_orig, aes(y = relapse_free_months)) +
-  geom_boxplot(
-    aes(color = consensuscluster, fill = consensuscluster),
-    bins = 30,
-    alpha = 0.3,
-    outlier.size = 2,
-    outlier.colour = "black"
-  )
-
 ```
 For the relapse free months, none of the cluster comparisons show significance, with a mean ranging from ~95-115 months.
 
@@ -1607,29 +898,9 @@ clinical_test(
   variable_name = "Surv_days",
   clinical_df =  RNA_clin_data[!is.na(RNA_clin_data[, "Surv_days"]), ],
   formula = consensuscluster ~ Surv_days,
-  predictor_type = "numerical"
+  predictor_type = "numerical",
+  3
 )
-
-# Undo the feature scaling for easier interpretation of the data
-RNA_clin_data_orig <- RNA_clin_data
-RNA_clin_data_orig$Surv_days <- RNA_clin_data_orig$Surv_days ^ 2
-
-group_by(RNA_clin_data_orig[!is.na(RNA_clin_data_orig[, "Surv_days"]), ], RNA_clin_data[!is.na(RNA_clin_data_orig[, "Surv_days"]), "consensuscluster"]) %>%
-  summarise(
-    count = n(),
-    mean = mean(Surv_days, na.rm = TRUE),
-    sd = sd(Surv_days, na.rm = TRUE)
-  )
-
-ggplot(RNA_clin_data_orig, aes(y = Surv_days)) +
-  geom_boxplot(
-    aes(color = consensuscluster, fill = consensuscluster),
-    bins = 30,
-    alpha = 0.3,
-    outlier.size = 2,
-    outlier.colour = "black"
-  )
-
 ```
 For the survival months, the cluster 2 indicates a survival significance against cluster 1 and 2. The cluster 2 is associated with lower survival months (mean of ~72 months), compared to cluster 1 (mean of ~97 months) and cluster 3 (mean of ~103 months).
 
@@ -1642,36 +913,9 @@ clinical_test(
   variable_name = "histological_grade",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ histological_grade,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "histological_grade"]), c("histological_grade", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'histological_grade')])
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "histological_grade",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = histological_grade)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The histological grade shows significance on the non-parametric tests with p-values < 0.05, even though the logistic regression model didn't provide the same results. Visualizing the distributions per cluster, the cluster 3 shows a higher relative percentage of histological type 2 patients (68%) compared to cluster 1 and 2 (~10%).
 
@@ -1681,36 +925,8 @@ clinical_test(
   variable_name = "vital_status",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ vital_status,
-  predictor_type = "categorical"
-)
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "vital_status"]), c("vital_status", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'vital_status')])
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "vital_status",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = vital_status)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
+  predictor_type = "categorical",
+  3)
 ```
 The vital status shows significance with p-values < 0.05. One of the most significant difference between cluster 2 and cluster 3 is the % of living patients, where cluster 2 has a higher % of living people (24%) compared to cluster 3 (~40%). On the other hand, the most significant differences between cluster 1 and cluster 2 is the % of living patients and the % of people that died of disease, where cluster 1 has a higher chance of dying of disease and of living (in general).
 
@@ -1721,36 +937,9 @@ clinical_test(
   variable_name = "histological_type",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ histological_type,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "histological_type"]), c("histological_type", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'histological_type')])
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "histological_type",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = histological_type)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The histological type shows significance with p-values < 0.05 between cluster 2 vs 3 and cluster 1 vs 3 on histological type == "Lobular" and "Mixed". Cluster 3 has a lower percentage of Ductal cases compared to the other two clusters.
 
@@ -1761,38 +950,38 @@ clinical_test(
   variable_name = "tumor_stage",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ tumor_stage,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
 
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "tumor_stage"]), c("tumor_stage", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'tumor_stage')])
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "tumor_stage",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = tumor_stage)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
+clinical_test(
+  variable_name = "Stage",
+  clinical_df =  RNA_clin_data_val,
+  formula = consensuscluster ~ Stage,
+  predictor_type = "categorical",
+  2
+)
 ```
 The tumor stage shows significance with p-values < 0.05 between cluster 1 vs cluster 3. Cluster 3 has a higher percentage of stage 2 cases (68%) compared to the cluster 3 (47%).
+
+Race
+```{r}
+clinical_test(
+  variable_name = "race",
+  clinical_df =  RNA_clin_data,
+  formula = consensuscluster ~ race,
+  predictor_type = "categorical",
+  3
+)
+
+clinical_test(
+  variable_name = "Race",
+  clinical_df =  RNA_clin_data_val,
+  formula = consensuscluster ~ Race,
+  predictor_type = "categorical",
+  2
+)
+```
 
 
 Relapse
@@ -1801,37 +990,9 @@ clinical_test(
   variable_name = "Relapse",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ Relapse,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "Relapse"]), c("Relapse", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'Relapse')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "Relapse",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = Relapse)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The Relapse variable shows no significance among clusters.
 
@@ -1842,37 +1003,9 @@ clinical_test(
   variable_name = "menopausal_state",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ menopausal_state,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "menopausal_state"]), c("menopausal_state", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'menopausal_state')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "menopausal_state",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = menopausal_state)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The cluster 3 has a higher percentage of post-menopausal patients (75%) compared to cluster 1 (56%).
 
@@ -1882,37 +1015,9 @@ clinical_test(
   variable_name = "chemotherapy",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ chemotherapy,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "chemotherapy"]), c("chemotherapy", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'chemotherapy')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "chemotherapy",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = chemotherapy)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The cluster 1 has a higher percentage of patients treated with chemotherapy (61%) compared to cluster 1 (45%).
 
@@ -1922,40 +1027,11 @@ clinical_test(
   variable_name = "radiotherapy",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ radiotherapy,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "radiotherapy"]), c("radiotherapy", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'radiotherapy')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "radiotherapy",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = radiotherapy)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The cluster 1 has a higher percentage of patients treated with radiotherapy (77%) compared to cluster 1 (65%).
-
 
 hormone_therapy
 ```{r}
@@ -1963,37 +1039,9 @@ clinical_test(
   variable_name = "hormone_therapy",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ hormone_therapy,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "hormone_therapy"]), c("hormone_therapy", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'hormone_therapy')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "hormone_therapy",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = hormone_therapy)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 There is recorded significance for the hormone therapy values between cluster 2 vs cluster 3, and cluster 1 vs cluster 3. The cluster 3 presents the highest percentage of patients treated with hormone therapy (60%) compared to the other two clusters (~21-26%).
 
@@ -2004,37 +1052,9 @@ clinical_test(
   variable_name = "relapse_free_status",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ relapse_free_status,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "relapse_free_status"]), c("relapse_free_status", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'relapse_free_status')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "relapse_free_status",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = relapse_free_status)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The relapse free status variable shows no significance among clusters.
 
@@ -2044,45 +1064,16 @@ clinical_test(
   variable_name = "Surv_event",
   clinical_df =  RNA_clin_data,
   formula = consensuscluster ~ Surv_event,
-  predictor_type = "categorical"
+  predictor_type = "categorical",
+  3
 )
-
-temp_table <-
-  table(RNA_clin_data[!is.na(RNA_clin_data[, "Surv_event"]), c("Surv_event", "consensuscluster")])
-
-# counts
-temp_table
-
-# percentage
-colPercents(temp_table, 2)
-
-tab_var <-
-  table(RNA_clin_data[, c('consensuscluster', 'Surv_event')])
-
-plt <-
-  barplot(
-    tab_var,
-    legend.text = c('cluster1', 'cluster2', 'cluster3'),
-    xlab = "Surv_event",
-    ylab = "counts"
-  )
-print(plt)
-
-plt_prop <- ggplot(RNA_clin_data,
-                   aes(x = consensuscluster,
-                       fill = Surv_event)) +
-  geom_bar(position = "fill") +
-  labs(y = "Proportion")
-print(plt_prop)
-
 ```
 The survival event variable shows no significance among clusters.
 
 ## Mutations Analysis
-
 Download the mutations from the available sources. 
 
-Ref 2 mutations
+### Import mutations
 ```{r}
 mut_Ref2 <-
   read.delim(
@@ -2093,11 +1084,8 @@ mut_Ref2 <-
     skip = 1
   )
 
-mut_Ref2[0:10, 0:10]
-```
+print(mut_Ref2[0:10, 0:10])
 
-Ref 4 mutations
-```{r}
 mut_Ref4 <-
   read.delim(
     file = "~/TNBC_Research/data/mutations_files/Ref4_mutations.txt",
@@ -2107,11 +1095,8 @@ mut_Ref4 <-
     skip = 0
   )
 
-mut_Ref4[0:10, 0:10]
-```
+print(mut_Ref4[0:10, 0:10])
 
-TCGA mutations
-```{r}
 mut_TCGA <-
   read.delim(
     file = "~/TNBC_Research/data/mutations_files/TCGA_mutations.maf.txt",
@@ -2120,7 +1105,7 @@ mut_TCGA <-
     stringsAsFactors = F
   )
 
-mut_TCGA[0:10, 0:10]
+print(mut_TCGA[0:10, 0:10])
 ```
 
 Merging the mutation datasets
@@ -2137,177 +1122,29 @@ merged_mut <- rbind(merged_mut, mut_TCGA[merged_mut_cols])
 merged_mut[0:10, 0:10]
 ```
 
-We check the data frame dimensions
+Check the data frame dimensions
 ```{r}
 dim(merged_mut)
-```
-
-We drop mutations related to: UTR, introns, RNA and silent.
-```{r}
-mut_filters <-
-  c("3'UTR",
-    "5'Flank",
-    "3'Flank",
-    "5'UTR",
-    "IGR",
-    "Intron",
-    "Silent",
-    "RNA")
-mut_filter_index <-
-  which(merged_mut$Variant_Classification %in% mut_filters)
-merged_mut <- merged_mut[-mut_filter_index, ]
-
-dim(merged_mut)
-```
-
-We can observe the type of mutation in the column "Variant_Classification"
-```{r}
-table(merged_mut$Variant_Classification)[0:10]
-```
-We obtain the different samples and genes to make an array where it will store 0 and 1 depending on whether
-mutation is present.
-```{r}
-u_samples <- sort(unique(merged_mut$Tumor_Sample_Barcode))
-u_genes <- sort(unique(merged_mut$Hugo_Symbol))
-mut_matrix <-
-  matrix(
-    0,
-    nrow = length(u_genes),
-    ncol = length(u_samples),
-    
-    dimnames = list(u_genes, u_samples)
-  )
-
-mut_matrix[1:5, 1:5]
-
-mut_matrix <- mut_matrix[, -1]
-
-mut_matrix[1:5, 1:5]
-```
-
-We fill the array by doing one loop per sample
-```{r}
-for(i in colnames(mut_matrix)) {
-  aux_genes <-
-    merged_mut$Hugo_Symbol[which(merged_mut$Tumor_Sample_Barcode == i)]
-  mut_matrix[aux_genes, i] <- 1
-}
 ```
 
 
 Defining the cluster groups with the patient IDs
 ```{r}
 library(dplyr)
-k_clusters = 3
-cluster = list()
-
-for (i in seq(1, k_clusters)) {
-  cluster[[i]] <- filter(annon, annon$consensuscluster == i)
-}
 ```
 
-We observe the difference in the naming convention of mutations and rna-seq data, as well as the difference in dimensions. We can compare the first 16 characters.
+### Running the mutation analysis function
 ```{r}
-raw_brca_rnaseq <- RNA_seq_merged_allgenes
-
-mut_rnaseq_match <- match(gsub(
-  pattern = "-",
-  replacement = "\\.",
-  x = substr(colnames(mut_matrix), 1, 16)
-),
-substr(rownames(raw_brca_rnaseq), 1, 16))
-
-#mut_rnaseq_match[0:10]
+mutation_analysis_res <- mutation_analysis(merged_mut, RNA_seq_merged_allgenes, 3, annon_train)
 ```
 
-Clean the mutation matrix and expression matrix from NA values
-```{r}
-raw_brca_rnaseq <- t(RNA_seq_merged_allgenes)
-
-# to store the non NA values postitions
-mut_rnaseq_match_nonNA <- which(!is.na(mut_rnaseq_match))
-
-# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
-mut_matrix_rna <- mut_matrix[, mut_rnaseq_match_nonNA]
-mut_rnaseq_match <- mut_rnaseq_match[mut_rnaseq_match_nonNA]
-
-rna_mut <- raw_brca_rnaseq[, mut_rnaseq_match]
-
-cbind(colnames(mut_matrix_rna)[c(1, 20, 50, 54)],
-      colnames(rna_mut)[c(1, 20, 50, 54)])
-```
-
-We filter the genes in RNA-seq that show no variation and we keep the most frequent mutations only.
-```{r}
-# We convert all the dataframe as numeric
-rna_mut <-
-  mutate_all(data.frame(rna_mut), function(x)
-    as.numeric(as.character(x)))
-
-# We apply the mad function
-rna_mut_mad <- apply(rna_mut, 1, mad)
-mad_zero <- which(rna_mut_mad == 0)
-rna_mut <- rna_mut[-mad_zero, ]
-table(apply(mut_matrix_rna, 1, sum))
-```
-
-We count the times each mutation appears in the matrix and store the ones with an appearance of >9 times
-```{r}
-# We count the times each mutation appears in the matrix
-mut_matrix_rna_count <- apply(mut_matrix_rna, 1, sum)
-
-# if the mutation count is greater than 9, we add it to the mut_matrix_rna
-mut_matrix_rna <- mut_matrix_rna[which(mut_matrix_rna_count > 9), ]
-
-mut_matrix_rna[0:10, 0:10]
-```
 
 ### T-test mutations merged
 
 We run a t-test to know which genes change according to the mutations
 ```{r}
-mut_rna_test <- c()
-mut_rna_test_names <- c()
-mut_rna_test_df <- data.frame()
-for (i in 1:2) {
-  # we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
-  aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
-    # mutation: the mutation row (presence or absence of mutation per gene sequence)
-    # exp: the gene row of the rna_mut matrix
-    temp_df <-  data.frame(mut = mut_matrix_rna[i,],
-                           exp = as.matrix(rna_mut)[x,])
-    temp_df <- na.omit(temp_df)
-    
-    if (length(temp_df) > 0 && length(unique(temp_df$mut)) == 2) {
-      aux_test <-
-        t.test(
-          formula = exp ~ mut,
-          data = temp_df
-        )$p.value
-      
-      mut_rna_test_names <- paste(rownames(mut_matrix_rna)[i], rownames(rna_mut)[x], sep = "_")
-      row_aux_test <- data.frame(aux_test, row.names = c(mut_rna_test_names))
-
-      #c(aux_test$p.value, rna_mut[x])
-      #c(aux_test$p.value, c(rna_mut[x,]))
-    }
-  }))
-  
-  
-  # appending each test into a vector
-  mut_rna_test_df <- rbind(mut_rna_test_df, t(aux_mut_test))
-}
-
-# we save the P values and FDR of each test
-#mut_rna_test_unlisted <- unlist(mut_rna_test)
-mut_rna_test <- do.call(rbind.data.frame, mut_rna_test_df$V1)
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test$aux_test, method='fdr'))
-colnames(mut_rna_test) <- c("p_value", "fdr")
-
-# we order the resulting matrix by P value
-mut_rna_test <- mut_rna_test[order(mut_rna_test[, "p_value"]), ]
-mut_rna_test[1:5, ]
-
+mut_rna_test = mutation_t_test(mutation_analysis_res$mut_matrix_rna, 
+                               mutation_analysis_res$rna_mut)
 ```
 
 Export the data frame with the p-values to a csv file
@@ -2317,253 +1154,69 @@ mut_rna_test$row_names <- rownames(mut_rna_test)
 
 write.csv(
   as.data.frame(mut_rna_test),
-  "~\\TNBC_research\\code\\csv_and_objects\\mutations\\Mutations_merged_T_test.csv",
+  "C:\\Users\\victo\\OneDrive\\Documentos\\TNBC_research\\Clustering\\Mutations_merged_T_test.csv",
   row.names = FALSE
 )
 ```
 
-### Mtations per cluster
+### Mutations per cluster
 ```{r}
 mut_matrix_rna <- as.data.frame(mut_matrix_rna)
 mut_matrix_rna[0:10,0:10]
 ```
 
 ```{r}
-rna_mut[0:10,0:10]
-```
-
-```{r}
 RNA_seq_merged <- as.data.frame(t(RNA_seq_merged))
 RNA_seq_merged[0:10,0:10]
 ```
+
+Slice the rnaseq matrices and mutation matrices into the different clusters
 ```{r}
-colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 3)])[0:10]
-```
+# Cluster 1
+mut_rnaseq_cluster_res <- create_cluster_rnaseq_matrix(rna_mut, mut_matrix_rna, 1)
 
-```{r}
-colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 2)])[0:10]
-```
+mut_matrix_rna_cluster1 <- mut_rnaseq_cluster_res$mut_matrix_rna
+mut_rnaseq_match_cluster1 <- mut_rnaseq_cluster_res$mut_rnaseq_match
+rna_mut_cluster1 <- mut_rnaseq_cluster_res$rna_mut_cluster
 
-```{r}
-colnames(RNA_seq_merged[,which(RNA_seq_merged["consensuscluster",] == 1)])[0:10]
-```
+# Cluster 2
+mut_rnaseq_cluster_res <- create_cluster_rnaseq_matrix(rna_mut, mut_matrix_rna, 2)
 
-```{r}
-mut_rnaseq_match_cluster1 <-
-  match(gsub(
-    pattern = "-",
-    replacement = "\\.",
-    x = substr(colnames(rna_mut), 1, 16)
-  ),
-  substr(colnames(RNA_seq_merged[, which(RNA_seq_merged["consensuscluster",] == 1)]), 1, 16))
+mut_matrix_rna_cluster2 <- mut_rnaseq_cluster_res$mut_matrix_rna
+mut_rnaseq_match_cluster2 <- mut_rnaseq_cluster_res$mut_rnaseq_match
+rna_mut_cluster2 <- mut_rnaseq_cluster_res$rna_mut_cluster
 
-# to store the NA values postitions
-NA_cluster1 <- which(is.na(mut_rnaseq_match_cluster1))
+# Cluster 3
+mut_rnaseq_cluster_res <- create_cluster_rnaseq_matrix(rna_mut, mut_matrix_rna, 3)
 
-# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
-mut_matrix_rna_cluster1 <- mut_matrix_rna[,-NA_cluster1]
-mut_rnaseq_match_cluster1 <- mut_rnaseq_match_cluster1[-NA_cluster1]
-rna_mut_cluster1 <- rna_mut[-NA_cluster1]
-
-print(dim(rna_mut_cluster1))
-print(dim(mut_matrix_rna_cluster1))
-```
-```{r}
-mut_rnaseq_match_cluster2 <-
-  match(gsub(
-    pattern = "-",
-    replacement = "\\.",
-    x = substr(colnames(rna_mut), 1, 16)
-  ),
-  substr(colnames(RNA_seq_merged[, which(RNA_seq_merged["consensuscluster",] == 2)]), 1, 16))
-
-# to store the NA values postitions
-NA_cluster2 <- which(is.na(mut_rnaseq_match_cluster2))
-
-# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
-mut_matrix_rna_cluster2 <- mut_matrix_rna[,-NA_cluster2]
-mut_rnaseq_match_cluster2 <- mut_rnaseq_match_cluster2[-NA_cluster2]
-rna_mut_cluster2 <- rna_mut[-NA_cluster2]
-
-print(dim(rna_mut_cluster2))
-print(dim(mut_matrix_rna_cluster2))
-```
-
-```{r}
-mut_rnaseq_match_cluster3 <-
-  match(gsub(
-    pattern = "-",
-    replacement = "\\.",
-    x = substr(colnames(rna_mut), 1, 16)
-  ),
-  substr(colnames(RNA_seq_merged[, which(RNA_seq_merged["consensuscluster",] == 3)]), 1, 16))
-
-# to store the NA values postitions
-NA_cluster3 <- which(is.na(mut_rnaseq_match_cluster3))
-
-# to remove the NA values from mut_matrix_rna and mut_rnaseq_match
-mut_matrix_rna_cluster3 <- mut_matrix_rna[,-NA_cluster3]
-mut_rnaseq_match_cluster3 <- mut_rnaseq_match_cluster3[-NA_cluster3]
-rna_mut_cluster3 <- rna_mut[-NA_cluster3]
-
-print(dim(rna_mut_cluster3))
-print(dim(mut_matrix_rna_cluster3))
+mut_matrix_rna_cluster3 <- mut_rnaseq_cluster_res$mut_matrix_rna
+mut_rnaseq_match_cluster3 <- mut_rnaseq_cluster_res$mut_rnaseq_match
+rna_mut_cluster3 <- mut_rnaseq_cluster_res$rna_mut_cluster
 ```
 
 ### Chi2 mutations merged
 
 We run a chi2 to know which genes change according to the mutations from cluster 1 vs cluster 2
 ```{r}
-mut_rna_test <- c()
-mut_rna_test_names <- c()
-for (i in 1:nrow(mut_matrix_rna)) {
-  # mutation: the mutation row (presence or absence of mutation per gene sequence)
-  # exp: the gene row of the rna_mut matrix
-  ones1 <- sum(mut_matrix_rna_cluster1[i,])
-  zeros1 <- length(mut_matrix_rna_cluster1[i,]) - ones1
-  
-  ones2 <- sum(mut_matrix_rna_cluster2[i,])
-  zeros2 <- length(mut_matrix_rna_cluster2[i,]) - ones2
-  
-  mut_clust <- as.table(rbind(c(zeros1, zeros2), c(ones1, ones2)))
-  dimnames(mut_clust) <- list(status = c("No mutation", "Mutation"),
-                              cluster = c("1", "2"))
-  
-  aux_mut_test <-
-    chisq.test(mut_clust, simulate.p.value = T)$p.value
-  
-  # appending each test into a vector
-  mut_rna_test <- c(mut_rna_test, aux_mut_test)
-  # appending each name into a vector
-  mut_rna_test_names <-
-    c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i]))
-}
+# We run a chi2 to know which genes change according to the mutations from cluster 1 vs cluster 2
+res12 <- chi2_test_clusters_pair(mut_matrix_rna, mut_matrix_rna_cluster1, mut_matrix_rna_cluster2, c("1","2"))
+significant_mutations_values12 <- res12$significant_mutations_values
+mut_rna_test_12 <- res12$mut_rna_test
+print(significant_mutations_values12)
 
-# we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
-colnames(mut_rna_test) <- c("p_value", "fdr")
-rownames(mut_rna_test) <- mut_rna_test_names
+# We run a chi2 to know which genes change according to the mutations from cluster 1 vs cluster 3
+res13 <- chi2_test_clusters_pair(mut_matrix_rna, mut_matrix_rna_cluster1, mut_matrix_rna_cluster3, c("1","3"))
+significant_mutations_values13 <- res13$significant_mutations_values
+mut_rna_test_13 <- res13$mut_rna_test
+print(significant_mutations_values13)
 
-# we order the resulting matrix by P value
-mut_rna_test_12 <- as.data.frame(mut_rna_test[order(mut_rna_test[, "p_value"]),])
-
-print("Significant mutations")
-significant_mutations <-
-  mut_rna_test_12[mut_rna_test_12$p_value < 0.05, ]
-significant_mutations_names12 <- rownames(significant_mutations)
-print(significant_mutations)
-
-significant_mutations_values <-
-  as.data.frame(cbind(
-    rowSums(mut_matrix_rna_cluster1[significant_mutations_names12, ]),
-    rowSums(mut_matrix_rna_cluster2[significant_mutations_names12, ])
-  ))
-
-colnames(significant_mutations_values) <-
-  c("cluster 1", "cluster 2")
-print(significant_mutations_values)
-```
-We run a chi2 to know which genes change according to the mutations from cluster 1 vs cluster 3
-```{r}
-mut_rna_test <- c()
-mut_rna_test_names <- c()
-for (i in 1:nrow(mut_matrix_rna)) {
-  # mutation: the mutation row (presence or absence of mutation per gene sequence)
-  # exp: the gene row of the rna_mut matrix
-  ones1 <- sum(mut_matrix_rna_cluster1[i, ])
-  zeros1 <- length(mut_matrix_rna_cluster1[i, ]) - ones1
-  
-  ones3 <- sum(mut_matrix_rna_cluster3[i, ])
-  zeros3 <- length(mut_matrix_rna_cluster3[i, ]) - ones3
-  
-  mut_clust <- as.table(rbind(c(zeros1, zeros3), c(ones1, ones3)))
-  dimnames(mut_clust) <- list(status = c("No mutation", "Mutation"),
-                              cluster = c("1", "3"))
-  
-  aux_mut_test <- chisq.test(mut_clust, simulate.p.value = T)$p.value
-  
-  # appending each test into a vector
-  mut_rna_test <- c(mut_rna_test, aux_mut_test)
-  # appending each name into a vector
-  mut_rna_test_names <-
-    c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i]))
-}
-
-# we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
-colnames(mut_rna_test) <- c("p_value", "fdr")
-rownames(mut_rna_test) <- mut_rna_test_names
-
-# we order the resulting matrix by P value
-mut_rna_test_13 <- as.data.frame(mut_rna_test[order(mut_rna_test[, "p_value"]),])
-
-print("Significant mutations")
-significant_mutations <-
-  mut_rna_test_13[mut_rna_test_13$p_value < 0.05, ]
-significant_mutations_names13 <- rownames(significant_mutations)
-print(significant_mutations)
-
-significant_mutations_values <-
-  as.data.frame(cbind(
-    rowSums(mut_matrix_rna_cluster1[significant_mutations_names13, ]),
-    rowSums(mut_matrix_rna_cluster3[significant_mutations_names13, ])
-  ))
-
-colnames(significant_mutations_values) <-
-  c("cluster 1", "cluster 3")
-print(significant_mutations_values)
+# We run a chi2 to know which genes change according to the mutations from cluster 2 vs cluster 3
+res23 <- chi2_test_clusters_pair(mut_matrix_rna, mut_matrix_rna_cluster2, mut_matrix_rna_cluster3, c("2","3"))
+significant_mutations_values23 <- res23$significant_mutations_values
+mut_rna_test_23 <- res23$mut_rna_test
+print(significant_mutations_values23)
 ```
 
-We run a chi2 to know which genes change according to the mutations from cluster 2 vs cluster 3
-```{r}
-mut_rna_test <- c()
-mut_rna_test_names <- c()
-for (i in 1:nrow(mut_matrix_rna)) {
-  # mutation: the mutation row (presence or absence of mutation per gene sequence)
-  # exp: the gene row of the rna_mut matrix
-  ones2 <- sum(mut_matrix_rna_cluster2[i, ])
-  zeros2 <- length(mut_matrix_rna_cluster2[i, ]) - ones2
-  
-  ones3 <- sum(mut_matrix_rna_cluster3[i, ])
-  zeros3 <- length(mut_matrix_rna_cluster3[i, ]) - ones3
-  
-  mut_clust <- as.table(rbind(c(zeros2, zeros3), c(ones2, ones3)))
-  dimnames(mut_clust) <- list(status = c("No mutation", "Mutation"),
-                              cluster = c("2", "3"))
-  
-  aux_mut_test <- chisq.test(mut_clust, simulate.p.value = T)$p.value
-  
-  # appending each test into a vector
-  mut_rna_test <- c(mut_rna_test, aux_mut_test)
-  # appending each name into a vector
-  mut_rna_test_names <-
-    c(mut_rna_test_names, paste(rownames(mut_matrix_rna)[i]))
-}
-
-# we save the P values and FDR of each test
-mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method = 'fdr'))
-colnames(mut_rna_test) <- c("p_value", "fdr")
-rownames(mut_rna_test) <- mut_rna_test_names
-
-# we order the resulting matrix by P value
-mut_rna_test_23 <- as.data.frame(mut_rna_test[order(mut_rna_test[, "p_value"]),])
-
-print("Significant mutations")
-significant_mutations <-
-  mut_rna_test_23[mut_rna_test_23$p_value < 0.05, ]
-significant_mutations_names23 <- rownames(significant_mutations)
-print(significant_mutations)
-
-significant_mutations_values <-
-  as.data.frame(cbind(
-    rowSums(mut_matrix_rna_cluster2[significant_mutations_names23, ]),
-    rowSums(mut_matrix_rna_cluster3[significant_mutations_names23, ])
-  ))
-
-colnames(significant_mutations_values) <-
-  c("cluster 2", "cluster 3")
-print(significant_mutations_values)
-```
 
 Export the data frame with the p-values to a csv file
 ```{r}
@@ -2625,7 +1278,6 @@ plt <-
     horiz = T,
     las=2
   )
-
 ```
 
 ## DEGs (Differentially expressed genes among clusters)
@@ -2689,61 +1341,61 @@ fit$coefficients[1:10, ]
 In order to perform the differential analysis, we have to define the contrast that we are interested in. In our case we only have two groups and one contrast of interest. Multiple contrasts can be defined in the makeContrasts function.
  
 ```{r}
-contrasts_c1 <- makeContrasts(Cluster1 - (Cluster2 + Cluster3)/2, levels = design)
-contrasts_c2 <-
-  makeContrasts(Cluster2 - (Cluster1 + Cluster3)/2, levels = design)
-contrasts_c3 <-
-  makeContrasts(Cluster3 - (Cluster1 + Cluster2)/2, levels = design)
+contrasts_c1c2 <- makeContrasts(Cluster1 - Cluster2, levels = design)
+contrasts_c1c3 <-
+  makeContrasts(Cluster1 - Cluster3, levels = design)
+contrasts_c2c3 <-
+  makeContrasts(Cluster2 - Cluster3, levels = design)
 
-fitc1 <- contrasts.fit(fit, contrasts_c1)
-fitc2 <- contrasts.fit(fit, contrasts_c2)
-fitc3 <- contrasts.fit(fit, contrasts_c3)
+fitc1c2 <- contrasts.fit(fit, contrasts_c1c2)
+fitc1c3 <- contrasts.fit(fit, contrasts_c1c3)
+fitc2c3 <- contrasts.fit(fit, contrasts_c2c3)
 ```
 
 
 Finally, apply the empirical Bayes’ step to get our differential expression statistics and p-values.
 ```{r}
-fitc1 <- eBayes(fitc1)
-fitc2 <- eBayes(fitc2)
-fitc3 <- eBayes(fitc3)
+fitc1c2 <- eBayes(fitc1c2)
+fitc1c3 <- eBayes(fitc1c3)
+fitc2c3 <- eBayes(fitc2c3)
 ```
 
 We usually get our first look at the results by using the topTable command
 ```{r}
-topTable(fitc1)
+topTable(fitc1c2)
 ```
 ```{r}
-topTable(fitc2)
+topTable(fitc1c3)
 ```
 ```{r}
-topTable(fitc3)
+topTable(fitc2c3)
 ```
 
 If we want to know how many genes are differentially-expressed overall we can use the decideTests function.
 
-** Cluster1 vs All
+** Cluster1 - Cluster 2
 ```{r}
-decideTests(fitc1)
+decideTests(fitc1c2)
 ```
 ```{r}
-table(decideTests(fitc1))
-```
-
-** Cluster2 vs All
-```{r}
-decideTests(fitc2)
-```
-```{r}
-table(decideTests(fitc2))
+table(decideTests(fitc1c2))
 ```
 
-** Cluster3 vs All
+** Cluster1 - Cluster 3
 ```{r}
-decideTests(fitc3)
+decideTests(fitc1c3)
+```
+```{r}
+table(decideTests(fitc1c3))
+```
+
+** Cluster2 - Cluster 3
+```{r}
+decideTests(fitc2c3)
 ```
 
 ```{r}
-table(decideTests(fitc3))
+table(decideTests(fitc2c3))
 ```
 
 ### Further processing and visualisation of DE results
@@ -2753,14 +1405,14 @@ For your own data, you will have to choose the columns that are of interest to y
 
 Once an annotation data frame has been created, it can be assigned to our results.
 ```{r}
-full_resultsc1 <- topTable(fitc1, number = Inf)
-full_resultsc1 <- tibble::rownames_to_column(full_resultsc1, "ID")
+full_resultsc1c2 <- topTable(fitc1c2, number = Inf)
+full_resultsc1c2 <- tibble::rownames_to_column(full_resultsc1c2, "ID")
 
-full_resultsc2 <- topTable(fitc2, number = Inf)
-full_resultsc2 <- tibble::rownames_to_column(full_resultsc2, "ID")
+full_resultsc1c3 <- topTable(fitc1c3, number = Inf)
+full_resultsc1c3 <- tibble::rownames_to_column(full_resultsc1c3, "ID")
 
-full_resultsc3 <- topTable(fitc3, number = Inf)
-full_resultsc3 <- tibble::rownames_to_column(full_resultsc3, "ID")
+full_resultsc2c3 <- topTable(fitc2c3, number = Inf)
+full_resultsc2c3 <- tibble::rownames_to_column(full_resultsc2c3, "ID")
 ```
 
 The “Volcano Plot” function is a common way of visualising the results of a DE analysis. The x axis shows the log-fold change and the y axis is some measure of statistical significance, which in this case is the log-odds, or “B” statistic. A characteristic “volcano” shape should be seen.
@@ -2780,9 +1432,9 @@ fc_cutoff <- 1.5
 topN <- 20
 ```
 
-Cluster 1 vs All
+Cluster 1 vs Cluster 2
 ```{r}
-full_resultsc1 %>%
+full_resultsc1c2 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2793,9 +1445,9 @@ full_resultsc1 %>%
   )) + geom_point() + geom_text_repel(col = "black")
 ```
 
-Cluster 2 vs All
+Cluster 1 vs Cluster 3
 ```{r}
-full_resultsc2 %>%
+full_resultsc1c3 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2806,9 +1458,9 @@ full_resultsc2 %>%
   )) + geom_point() + geom_text_repel(col = "black")
 ```
 
-Cluster 3 vs All
+Cluster 2 vs Cluster 3
 ```{r}
-full_resultsc3 %>%
+full_resultsc2c3 %>%
   mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
   mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
   ggplot(aes(
@@ -2821,28 +1473,28 @@ full_resultsc3 %>%
 
 We can filter according to p-value (adjusted) and fold-change cut-offs
 ```{r}
-sign_genes_c1 <- filter(full_resultsc1, adj.P.Val < p_cutoff)
-sign_genes_c2 <- filter(full_resultsc2, adj.P.Val < p_cutoff)
-sign_genes_c3 <- filter(full_resultsc3, adj.P.Val < p_cutoff)
+sign_genes_c1c2 <- filter(full_resultsc1c2, adj.P.Val < p_cutoff)
+sign_genes_c1c3 <- filter(full_resultsc1c3, adj.P.Val < p_cutoff)
+sign_genes_c2c3 <- filter(full_resultsc2c3, adj.P.Val < p_cutoff)
 ```
 
 We save the results
 ```{r}
 library(readr)
-full_resultsc1 %>%
-  write_csv(file="complete_DEGs_results_c1_18_sep_22.csv")
+full_resultsc1c2 %>%
+  write_csv(file="complete_DEGs_results_c1c2_18_sep_22.csv")
 
-full_resultsc2 %>%
-  write_csv(file="complete_DEGs_results_c2_18_sep_22.csv")
+full_resultsc1c3 %>%
+  write_csv(file="complete_DEGs_results_c1c3_18_sep_22.csv")
 
-full_resultsc3 %>%
-  write_csv(file="complete_DEGs_results_c3_18_sep_22.csv")
+full_resultsc2c3 %>%
+  write_csv(file="complete_DEGs_results_c2c3_18_sep_22.csv")
 ```
 
 
 Comparing the diferentially expressed genes between all the clusters
 ```{r}
-significant_genes <- filter(full_resultsc1, p.adjust(P.Value, method="fdr") < p_cutoff)$ID
+significant_genes <- filter(full_resultsc1c2, p.adjust(P.Value, method="fdr") < p_cutoff)$ID
 
 cc1 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 1])
 cc2 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 2])
@@ -2870,26 +1522,26 @@ In the code below we introduce a new column to the results which just gives a ro
 topN <- 20
 
 ##
-ids_of_interest1 <- mutate(full_resultsc1, Rank = 1:n()) %>%
+ids_of_interest12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
-ids_of_interest2 <- mutate(full_resultsc2, Rank = 1:n()) %>%
+ids_of_interest13 <- mutate(full_resultsc1c3, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
-ids_of_interest3 <- mutate(full_resultsc3, Rank = 1:n()) %>%
+ids_of_interest23 <- mutate(full_resultsc2c3, Rank = 1:n()) %>%
   filter(Rank < topN) %>%
   pull(ID)
 ```
 
 In order to label the heatmap in a useful manner we extract the corresponding gene symbols.
 ```{r}
-gene_names1 <- mutate(full_resultsc1, Rank = 1:n()) %>% 
+gene_names12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
-gene_names2 <- mutate(full_resultsc2, Rank = 1:n()) %>% 
+gene_names13 <- mutate(full_resultsc1c3, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
-gene_names3 <- mutate(full_resultsc3, Rank = 1:n()) %>% 
+gene_names23 <- mutate(full_resultsc2c3, Rank = 1:n()) %>% 
   filter(Rank < topN) %>% 
   pull(ID) 
 ```
@@ -2897,25 +1549,25 @@ gene_names3 <- mutate(full_resultsc3, Rank = 1:n()) %>%
 The expression values for the IDs we have retrieved can be obtained by using the [..] notation to index the expression matrix.
 ```{r}
 ## Get the rows corresponding to ids_of_interest and all columns
-gene_matrix1 <- t(RNA_seq_exprs)[ids_of_interest1,]
-gene_matrix2 <- t(RNA_seq_exprs)[ids_of_interest2,]
-gene_matrix3 <- t(RNA_seq_exprs)[ids_of_interest3,]
+gene_matrix12 <- t(RNA_seq_exprs)[ids_of_interest12,]
+gene_matrix13 <- t(RNA_seq_exprs)[ids_of_interest13,]
+gene_matrix23 <- t(RNA_seq_exprs)[ids_of_interest23,]
 ```
 
 We now make the heatmap. A default colour scheme is used, but can be changed via the arguments. 
 ```{r}
-pheatmap(gene_matrix1[,1:20],
-     labels_row = gene_names1,
+pheatmap(gene_matrix12[,1:20],
+     labels_row = gene_names,
      scale="row")
 ```
 ```{r}
-pheatmap(gene_matrix2[,1:20],
-     labels_row = gene_names2,
+pheatmap(gene_matrix13[,1:20],
+     labels_row = gene_names,
      scale="row")
 ```
 ```{r}
-pheatmap(gene_matrix3[,1:20],
-     labels_row = gene_names3,
+pheatmap(gene_matrix23[,1:20],
+     labels_row = gene_names,
      scale="row")
 ```
 ## PATHWAYS
