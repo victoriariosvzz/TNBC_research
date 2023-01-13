@@ -1760,7 +1760,7 @@ options(stringsAsFactors = F)
 
 Reading clinical data
 ```{r}
-raw_brca_clin <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
+raw_brca_clin <- read.delim(file = "~/TNBC_research/data/db_files/Ref 3/Ref3_untar/brca_cptac_2020/data_clinical_sample.txt", sep = "\t", header = T, row.names = 1, as.is = T)
 
 # Re-structuring the header
 names(raw_brca_clin) <- as.matrix(raw_brca_clin[4, ])
@@ -1798,7 +1798,7 @@ The function cor can calculate the correlation (on scale 0 - 1) in a pairwise fa
 
 Reading expression data
 ```{r}
-exprs_data <- read.delim(file = "C:/Users/victo/OneDrive/Documentos/TNBC_research/Database exploring/DB compressed files/Ref 3/Ref3_untar/brca_cptac_2020/data_mrna_seq_fpkm.txt", sep = "\t", header = T)
+exprs_data <- read.delim(file = "~/TNBC_research/data/db_files/Ref 3/Ref3_untar/brca_cptac_2020/data_mrna_seq_fpkm.txt", sep = "\t", header = T)
 
 # Re-structuring the header
 #row.names(exprs_data) <- exprs_data$Hugo_Symbol
@@ -1826,7 +1826,7 @@ summary(exprs_data[,0:10])
 From this output we clearly see that the values are normalized, so we won't need to perform a log2 transformation. A boxplot can also be generated to see if the data have been normalised. If so, the distributions of each sample should be highly similar.
 ```{r}
 # Modifying expression data to be normalized with log2
-#exprs_data <- log2(exprs_data+1)
+exprs_data_log2 <- log2(exprs_data+1)
 ref3_boxplot = data.frame(DB_3 = rowMeans(exprs_data, na.rm = FALSE, dims = 1))
 boxplot(ref3_boxplot,outline=FALSE)
 # 

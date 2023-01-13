@@ -139,7 +139,7 @@ cy_mat <- cy_mat[complete.cases(cy_mat), ]
 
 cy_mat_genes <- row.names(cy_mat)
 cy_mat_samples <- colnames(cy_mat)
-cy_mat <- normalize.quantiles(as.matrix(cy_mat))
+#cy_mat <- normalize.quantiles(as.matrix(cy_mat))
 
 cy_mat <- as.data.frame(cy_mat, row.names = cy_mat_genes)
 colnames(cy_mat) <- cy_mat_samples
@@ -162,7 +162,7 @@ cy_mat_pca <- prcomp(cy_mat[which(cy_mat_mad > 1), ])
 #Combat
 modcombat <- model.matrix( ~ 1, data = data.frame(cmb = cy_mat_batch))
 cy_mat_combat <-
-  ComBat(
+  sva::ComBat(
     dat = cy_mat,
     batch = cy_mat_batch,
     mod = modcombat,
@@ -181,7 +181,7 @@ cy_mat_combat_mad <- cy_mat_combat[which(cy_mat_combat_mad > 1), ]
 #Plot PCA before and after Combat
 
 ## Uncomment to save to a file
-#pdf("PCA_Before_Combat_1.pdf", width = 9.2)
+pdf("PCA_Before_Combat_1.pdf", width = 9.2)
 
 par(mfrow = c(1, 2))
 plot(
