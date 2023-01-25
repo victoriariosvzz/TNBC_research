@@ -458,6 +458,11 @@ clinical_plots = function(RNA_clin_data, clinical_vars_names, count_or_percentag
   if (k_clusters == 3) {
     clin_data3 <-
       RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 3),]
+  }else if (k_clusters == 4) {
+    clin_data3 <-
+      RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 3),]
+    clin_data4 <-
+      RNA_clin_data[which(RNA_clin_data["consensuscluster"] == 4),]
   }
   
   # Plotting categorical and numeric variables per cluster
@@ -489,6 +494,22 @@ clinical_plots = function(RNA_clin_data, clinical_vars_names, count_or_percentag
                             "variable",
                             "count")
       }
+      if (k_clusters == 4) {
+        var3 <- as.data.frame(table(clin_data3[vars]))
+        cluster_info <- as.data.frame(rep("3",
+                                          nrow(var3)))
+        var3 <- cbind(cluster_info, var3)
+        colnames(var3) <- c("cluster_info",
+                            "variable",
+                            "count")
+        var4 <- as.data.frame(table(clin_data4[vars]))
+        cluster_info <- as.data.frame(rep("4",
+                                          nrow(var4)))
+        var4 <- cbind(cluster_info, var4)
+        colnames(var4) <- c("cluster_info",
+                            "variable",
+                            "count")
+      }
       
       if (k_clusters == 3) {
         merged_df <- rbind(var1,
@@ -497,6 +518,11 @@ clinical_plots = function(RNA_clin_data, clinical_vars_names, count_or_percentag
       }else if (k_clusters == 2) {
         merged_df <- rbind(var1,
                            var2)
+      }else if (k_clusters == 4) {
+        merged_df <- rbind(var1,
+                           var2,
+                           var3,
+                           var4)
       }
       
       ## PLOTS
@@ -523,6 +549,11 @@ clinical_plots = function(RNA_clin_data, clinical_vars_names, count_or_percentag
         }else if (k_clusters == 2) {
           merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
                              clin_data2[c("consensuscluster", vars)])
+        }else if (k_clusters == 4) {
+          merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
+                             clin_data2[c("consensuscluster", vars)],
+                             clin_data3[c("consensuscluster", vars)],
+                             clin_data4[c("consensuscluster", vars)])
         }
         colnames(merged_df) <- c("consensuscluster",
                                  "vars")
@@ -619,7 +650,13 @@ clinical_plots = function(RNA_clin_data, clinical_vars_names, count_or_percentag
         }else if (k_clusters == 2) {
           merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
                              clin_data2[c("consensuscluster", vars)])
+        }else if (k_clusters == 4) {
+          merged_df <- rbind(clin_data1[c("consensuscluster", vars)],
+                             clin_data2[c("consensuscluster", vars)],
+                             clin_data3[c("consensuscluster", vars)],
+                             clin_data4[c("consensuscluster", vars)])
         }
+        
         colnames(merged_df) <- c("consensuscluster",
                                  "vars")
         
@@ -674,6 +711,19 @@ chi_squared_clusters <- function(variable_name, clinical_df, k_clusters) {
             clinical_df[, "consensuscluster"] == 3 &
             is.na(clinical_df[, variable_to_check]) != TRUE
         ))
+    }else if (k_clusters == 4) {
+      cluster3_no <-
+        length(which(
+          clinical_df[, variable_to_check] == value &
+            clinical_df[, "consensuscluster"] == 3 &
+            is.na(clinical_df[, variable_to_check]) != TRUE
+        ))
+      cluster4_no <-
+        length(which(
+          clinical_df[, variable_to_check] == value &
+            clinical_df[, "consensuscluster"] == 4 &
+            is.na(clinical_df[, variable_to_check]) != TRUE
+        ))
     }
     
     
@@ -695,6 +745,19 @@ chi_squared_clusters <- function(variable_name, clinical_df, k_clusters) {
         length(which(
           clinical_df[, variable_to_check] != value &
             clinical_df[, "consensuscluster"] == 3 &
+            is.na(clinical_df[, variable_to_check]) != TRUE
+        ))
+    }else if (k_clusters == 4) {
+      cluster3 <-
+        length(which(
+          clinical_df[, variable_to_check] != value &
+            clinical_df[, "consensuscluster"] == 3 &
+            is.na(clinical_df[, variable_to_check]) != TRUE
+        ))
+      cluster4 <-
+        length(which(
+          clinical_df[, variable_to_check] != value &
+            clinical_df[, "consensuscluster"] == 4 &
             is.na(clinical_df[, variable_to_check]) != TRUE
         ))
     }
@@ -721,7 +784,22 @@ chi_squared_clusters <- function(variable_name, clinical_df, k_clusters) {
       
       df$cluster1 <- c(cluster1_no, cluster1)
       df$cluster2 <- c(cluster2_no, cluster2)
+    }else if (k_clusters == 4) {
+      df <-
+        data.frame(
+          cluster1 = c(0, 0),
+          cluster2 = c(0, 0),
+          cluster3 = c(0, 0),
+          cluster4 = c(0, 0)
+        )
+      
+      
+      df$cluster1 <- c(cluster1_no, cluster1)
+      df$cluster2 <- c(cluster2_no, cluster2)
+      df$cluster3 <- c(cluster3_no, cluster3)
+      df$cluster4 <- c(cluster4_no, cluster4)
     }
+    
     
     rownames(df) <- c("0", "1")
     
@@ -853,6 +931,14 @@ clinical_test <-
           barplot(
             tab_var,
             legend.text = c('cluster1', 'cluster2'),
+            xlab = variable_name,
+            ylab = "counts"
+          )
+      }else if (k_clusters == 4) {
+        plt <-
+          barplot(
+            tab_var,
+            legend.text = c('cluster1', 'cluster2', 'cluster3', 'cluster4'),
             xlab = variable_name,
             ylab = "counts"
           )
