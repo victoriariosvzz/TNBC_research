@@ -961,6 +961,13 @@ clinical_test <-
       print(variable_name)
       print(summary(aov_variable))
       
+      print("Running T-test...")
+      # First, load the data for the two clusters into separate variables
+      cluster1 <- clinical_df_nonull[clinical_df_nonull$consensuscluster == 1, variable_name]
+      cluster2 <- clinical_df_nonull[clinical_df_nonull$consensuscluster == 2, variable_name]
+      
+      # Next, perform the t-test using the t.test() function
+      print(t.test(cluster1, cluster2))
       
       # Plots
       group_by(clinical_df[!is.na(clinical_df[, variable_name]), ], clinical_df[!is.na(clinical_df[, variable_name]), "consensuscluster"]) %>%

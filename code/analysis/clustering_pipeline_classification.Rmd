@@ -1089,6 +1089,8 @@ pheatmap(gene_matrix12[,1:20],
 
 ## Classification model
 
+### Logistic Regression
+
 Split the original dataset into stratified train and test sets. The stratification will be made based on the cluster column.
 ```{r}
 # First, install and load the randomForest package
@@ -1126,41 +1128,62 @@ table(train_split$consensuscluster)
 table(test_split$consensuscluster)
 ```
 
-Performing Grid Search to adjust the huperparameters to get the model that best
+Performing Grid Search to adjust the hyperparameters to get the model that best
 fits our training dataset.
 ```{r}
 library(caret)
+library(glmnet)
 
-train_data <- train_split[,!train_split %in% c('consensuscluster')]
-train_labels <- train_split$consensuscluster
+train_split_binary <- train_split
+train_split_binary$consensuscluster <- ifelse(train_split_binary$consensuscluster == 1, 0, 1)
+
+train_data_binary <- train_split_binary[,!colnames(train_split_binary) %in% c('consensuscluster')]
+train_labels_binary <- train_split_binary$consensuscluster
 
 # perform the tuning
+# Define the grid of hyperparameters to search
 set.seed(123)
-tuning_results <- tuneRF(x = train_data, y = train_labels, improve = 0.57, trace = TRUE, plot = TRUE, doBest = TRUE)
+cvfit = glmnet::cv.glmnet(x = as.matrix(train_data_binary), train_labels_binary, family = "binomial", alpha = 0.5)
+# control <- trainControl(method = "cv", number = 5)
+# grid <- expand.grid(alpha = c(0, 0.5, 1), lambda = seq(0, 1, 0.1))
+# model <- train(x = train_split[,!colnames(train_split) %in% c('consensuscluster')], y = as.factor(train_split$consensuscluster), method = "glmnet", tuneGrid = grid, trControl = control)
 
-# print the best hyperparameters
-print(tuning_results)
+# Print the best hyperparameters
+print(cvfit)
+
 ```
+
 
 Train the Random Forest Classification model with the best hyperparameters values
 ```{r}
 # Train the random forest
-rf_model <- randomForest(consensuscluster ~ ., data = train_split, ntree = tuning_results$ntree, mtry = tuning_results$mtry)
+final_model <-
+  glmnet(
+    x = train_data_binary,
+    y = train_labels_binary,
+    family = "binomial",
+    alpha = 0.5,
+    lambda = cvfit$lambda.1se
+  )
 
 # Make predictions on the test set
-predictions <- predict(rf_model, newdata = test_split)
+predictions <-
+  predict(final_model, newx = as.matrix(test_split[,!colnames(test_split) %in% c('consensuscluster')]), type = "class")
 
 # Evaluate the performance of the model
 library(caret)
-confusionMatrix(predictions, test_split$consensuscluster)
+confusionMatrix(as.factor(predictions),
+                as.factor(as.numeric(test_split$consensuscluster)-1))
 ```
 
 
-#### Classifying the validation dataset
+**Classifying the validation dataset**
 ```{r}
 # Make predictions on the test set
-predictions_val <- as.data.frame(predict(rf_model, newdata = classif_val))
+predictions_val_complete <- as.data.frame(predict(final_model, newx = classif_val, type = "class"))
+predictions_val <- as.data.frame(as.factor(as.numeric(predictions_val_complete$s0) + 1))
 colnames(predictions_val) <- c("predicted_clusters")
+rownames(predictions_val) <- rownames(predictions_val_complete)
 
 head(predictions_val)
 ```
@@ -1170,7 +1193,7 @@ Adding the cluster annotation to the total validation genes data frame
 # Genes and clustering
 RNA_seq_merged_allgenes_val <-
   merge(t(val_mad), predictions_val, by = "row.names", all.x = TRUE)
-rownames(RNA_seq_merged_allgenes_val) <-
+row.names(RNA_seq_merged_allgenes_val) <-
   t(RNA_seq_merged_allgenes_val["Row.names"])
 RNA_seq_merged_allgenes_val = subset(RNA_seq_merged_allgenes_val, select = -c(`Row.names`))
 
@@ -1180,14 +1203,14 @@ rownames(PCs_val) <- t(PCs_val["Row.names"])
 PCs_val = subset(PCs_val, select = -c(`Row.names`))
 
 # Clinical variables
-RNA_clin_data_val <-
+RNA_clin_data_merged_val <-
   merge(RNA_clin_data_val, predictions_val, by = "row.names")
-rownames(RNA_clin_data_val) <-
-  t(RNA_clin_data_val["Row.names"])
-RNA_clin_data_val = subset(RNA_clin_data_val, select = -c(`Row.names`))
+rownames(RNA_clin_data_merged_val) <-
+  t(RNA_clin_data_merged_val["Row.names"])
+RNA_clin_data_merged_val = subset(RNA_clin_data_merged_val, select = -c(`Row.names`))
 ```
 
-### Plotting the clusters: training and validation datasets
+***Plotting the clusters: training and validation datasets***
 
 **Training dataset: Consensus clusters**
 
@@ -1272,457 +1295,48 @@ ggscatter(
     stat_mean(aes(color = "predicted_clusters"), size = 4)
 ```
 
-
-
-
-
-### Option 1: Using BST
-Multi-class HingeBoost is applied for 200 boosting iterations. Plot the evolution
-of the misclassification error on the test data versus the iteration counter, as
-the multi-class HingeBoost algorithm proceeds while working on the test set.
-```{r}
-library(bst)
-
-train_classif$cluster <- as.numeric(train_classif$cluster)
-test_classif$V630 <- as.numeric(test_classif$V630)
-
-m1 <- m2 <- 200
-dat.m1 <- mhingebst(x=train_classif, y=train_classif$cluster, ctrl = bst_control(mstop=m1), family = "hinge", learner = c("ls"))
-
-risk.te1 <- predict(dat.m1, newdata=test_classif, newy=test_classif$V630, mstop=m1, type="error")
-plot(risk.te1, type="l", xlab="Iteration", ylab="Test Error")
-```
-Then, we plot the evolution of the number of genes selected versus the iteration counter.
-```{r}
-plot(nsel(dat.m1, m1), ylab="Number of PCs", xlab="Iteration", lty="solid", type="l")
-```
-
-Multi-class twin HingeBoost is applied based on the results from the first
-round HingeBoost for 150 iterations. Plot the evolution of the misclassification error on the test data versus the iteration counter, as the multi-class twin
-HingeBoost algorithm proceeds while working on the test set.
-```{r}
-fhat1 <- predict(dat.m1, mstop=150, type="response")
-xinit <- unlist(dat.m1$ensemble[1:150])
-xinit <- subset(xinit, !is.na(xinit))
-
-### How many genes selected with mstop=150
-length(unique(xinit))
-dat.m2 <- mhingebst(x=train_classif, y=train_classif$cluster, ctrl = bst_control(mstop=m2,
-twinboost=TRUE, f.init=fhat1, xselect.init=xinit), family = "hinge", learner = "ls")
-risk.te1 <- predict(dat.m2, newdata=test_classif, newy=test_classif$V630, mstop=m2, type="error")
-plot(risk.te1, type="l", xlab="Iteration", ylab="Test Error")
-```
-Plot the evolution of the number of genes selected versus the iteration
-counter, as the multi-class twin HingeBoost algorithm proceeds while working on the training set.
-```{r}
-plot(nsel(dat.m2, m2), ylab="Number of PCs", xlab="Iteration", lty="solid", type="l")
-```
-
-### Option 2: Using XGBoost
-
-Load packages
-```{r}
-library("xgboost")  # the main algorithm
-library("archdata") # for the sample dataset
-library("caret")    # for the confusionmatrix() function (also needs e1071 package)
-library("dplyr")    # for some data preperation
-library("Ckmeans.1d.dp") # for xgb.ggplot.importance
-```
-
-**Preprocess training and test data to feed the XGBoost model**
-```{r}
-# split train data and make xgb.DMatrix
-train_data   <- train_classif_orig[, !names(train_classif_orig) %in% ("consensuscluster")]
-train_label  <- as.data.frame(as.numeric(train_classif_orig$consensuscluster))
-train_matrix <- xgb.DMatrix(data = as.matrix(train_data), label = as.matrix(train_label-1))
-
-# split test data and make xgb.DMatrix
-test_data  <- test_classif_orig[, !names(test_classif_orig) %in% ("consensuscluster")]
-test_label <- as.data.frame(as.numeric(test_classif_orig$consensuscluster))
-test_matrix <- xgb.DMatrix(data = as.matrix(test_data), label = as.matrix(test_label-1))
-
-# creating a scaler based on the training set
-#X_train_scaled = scale(train_data)
-
-# applying the scaler to the test seet
-#X_test_scaled = scale(
-#  test_data,
-#  center = attr(X_train_scaled, "scaled:center"),
-#  scale = attr(X_train_scaled, "scaled:scale")
-#)
-```
-
-
-K-folds Cross-validation to Estimate Error
-```{r}
-set.seed(1)
-
-#numberOfClasses <- 2
-
-xgb_params <- list(booster = "gbtree",
-                   objective = "binary:logistic")
-
-nround    <- 100 # number of XGBoost rounds
-cv.nfold  <- 25
-
-# Fit cv.nfold * cv.nround XGB models and save OOF predictions
-cv_model <- xgb.cv(params = xgb_params,
-                   data = train_matrix, 
-                   nrounds = nround,
-                   nfold = cv.nfold,
-                   verbose = TRUE,
-                   prediction = TRUE,
-                   early_stopping_rounds = 20,
-                   stratified = TRUE,
-                   print_every_n = 10)
-```
-
-**Assess Out-of-Fold Prediction Error**
-To assess prediction error, we used the data returned from the pred slot of the cv_model object. The pred object contains the predicted value for each observation in our train dataset when it was in the kth fold, known as the out-of-fold sample. This sample was not used to train the model so therefore acts as an independent sample for testing (all caveats about k-folds CV apply!). This step allows us to derived an error estimate on all of our train samples as if the were independent from the model fit.
-```{r}
-OOF_prediction <- data.frame(cv_model$pred) %>%
-  mutate(max_prob = max.col(., ties.method = "last"),
-         label = train_label)
-head(OOF_prediction)
-```
-
-**Confusion Matrix**
-```{r}
-# confusion matrix
-confusionMatrix(factor(OOF_prediction$max_prob),
-                factor(as.integer(as.vector(t(OOF_prediction$label)))),
-                mode = "everything")
-```
-
-**Assess Test Set Error with CV results**
-As the errors assessed from the CV routine are acceptable and within a reasonable range of variation (e.g. all folds show relatively consistent error rates), we will proceed to the common practice to then fit the full training data set. 
-
-Following the model fit, the test set test_matrix is predicted using the bst_model. The results are transformed into a matrix of class predictions, the max probability is taken, and the true label is added all in the same way as done above for the OOF data. Of note though is that the prediction is returned as a single vector and needs to be transformed back to a matrix with care. Otherwise, the labels will be jumbled and the confusion matrix will show very poor performance.
-```{r}
-bst_model <- xgb.train(params = xgb_params,
-                       data = train_matrix,
-                       nrounds = nround)
-
-numberOfClasses <- 2
-
-# Predict hold-out test set
-test_pred <- predict(bst_model, newdata = test_matrix)
-test_prediction <- matrix(test_pred, nrow = 1,
-                          ncol=length(test_pred)) %>%
-  t() %>%
-  data.frame() %>%
-  mutate(label = test_label,
-         max_prob = max.col(., "last"))
-# confusion matrix of test set
-confusionMatrix(factor(test_prediction$max_prob),
-                factor(as.integer(as.vector(t(test_prediction$label)))-1),
-                mode = "everything")
-```
-
-**Finding the best model: Hyperparameter tuning with Grid Search**
-
-As a final hyperparameter tuning step, it is possible to further improve the performance of our model. Let's proceed to the random / grid search procedure and attempt to find better accuracy. From here on, we'll be using the MLR package for model building. A quick reminder, the MLR package creates its own frame of data, learner as shown below.
-```{r}
-#loading the library
-library(mlr)
-
-# Prepraring the training and test datasets for the Grid Search
-train_data_labels <- train_data
-train_data_labels$labels <- as.factor(as.matrix(train_label) - 1) 
-test_data_labels <- test_data
-test_data_labels$labels <- as.factor(as.matrix(test_label) - 1)
-
-#create tasks
-traintask <- makeClassifTask(data = train_data_labels, target = "labels")
-testtask <- makeClassifTask(data = test_data_labels, target = "labels")
-```
-
-Now, we'll set the learner and fix the number of rounds and eta as discussed above.
-```{r}
-#create learner
-lrn <- makeLearner("classif.xgboost", predict.type = "response")
-lrn$par.vals <-
-  list(
-    objective = "binary:logistic",
-    eval_metric = "error",
-    nrounds = 100L,
-    eta = 0.3
-  )
-
-#set parameter space
-params <-
-  makeParamSet(
-    makeDiscreteParam("booster", values = c("gbtree", "dart")),
-    makeIntegerParam("max_depth", lower = 1L, upper = 10L),
-    makeNumericParam("min_child_weight", lower = 1L, upper = 10L),
-    makeNumericParam("subsample", lower = 0.5, upper = 1),
-    makeNumericParam("colsample_bytree", lower = 0.5, upper = 1)
-  )
-
-#set resampling strategy
-rdesc <- makeResampleDesc("CV", stratify = T, iters = 10L)
-```
-
-With stratify=T, we'll ensure that distribution of target class is maintained in the resampled data sets. If you've noticed above, in the parameter set, I didn't consider gamma for tuning. Simply because during cross validation, we saw that train and test error are in sync with each other. Had either one of them been dragging or rushing, we could have brought this parameter into action.
-Now, we'll set the search optimization strategy. Though, xgboost is fast, instead of grid search, we'll use random search to find the best parameters. In random search, we'll build 10 models with different parameters, and choose the one with the least error. You are free to build any number of models.
-```{r}
-#search strategy
-ctrl <- makeTuneControlRandom(maxit = 20L)
-```
-
-We'll also set a parallel backend to ensure faster computation. Make sure you've not opened several applications in backend. We'll use all the cores in your machine.
-```{r}
-#set parallel backend
-library(parallel)
-library(parallelMap)
-
-parallelStartSocket(cpus = detectCores())
-
-#parameter tuning
-mytune <-
-  tuneParams(
-    learner = lrn,
-    task = traintask,
-    resampling = rdesc,
-    measures = acc,
-    par.set = params,
-    control = ctrl,
-    show.info = T
-  )
-
-# Print the accuracy of the tuned model
-mytune$y 
-```
-
-This newly obtained tuned CV accuracy is better than our default xgboost model. To check the tuning result, write mytune in your R console and press Enter. Let's build a model using tuned parameters and check the final test accuracy.
-```{r}
-#set hyperparameters
-lrn_tune <- setHyperPars(lrn, par.vals = mytune$x)
-
-#train model
-xgmodel <- train(learner = lrn_tune, task = traintask)
-
-#predict model
-xgpred <- predict(xgmodel, testtask)
-```
-
-We've made our predictions on the test set. Let's check our model's accuracy.
-```{r}
-confusionMatrix(xgpred$data$response, xgpred$data$truth)
-```
-
-**Variable Importance**
-The final step in this process, and potentially the first step in a the process of understanding the model, is assessing variable importance. Basically, this is a way of using all the splits in the XGBoost trees to understand how how accurate the classifications are based on the splits. This is quantified with the Gain measurement in the variable importance table obtained from the xgb.importance() function. According to the XGBoost documentation.
-
-The convenient xgb.plot.importance() function takes the Gain information and plots it using ggplot2. The variables are also clustered using k-means clustering that optimizes k based on Bayesian Information Criteria (BIC) for k=3. Here we can see that genes FOXA2, CCND1, STX12, MFAP5, TRIM15, and CFHR1 are apparently the most important in classifying each sample to the accuracy demonstrated by bst_model given the data and hyper-parameters.
-
-```{r}
-# get the feature real names
-names <-  colnames(train_classif_orig[,-1])
-# compute feature importance matrix
-importance_matrix = xgb.importance(feature_names = names, model = xgmodel$learner.model)
-head(importance_matrix)
-```
-
-```{r}
-# plot
-gp = xgb.ggplot.importance(importance_matrix[1:30,], n_clusters = 2)
-print(gp) 
-```
-
-**Predictions on the validation set (unseen information)**
-Pre-processing of validation dataset
-```{r}
-# split val data and make xgb.DMatrix
-val_data   <- temp_val[, !names(temp_val) %in% ("consensuscluster")]
-#val_data <- val_data[intersect(bst_model$feature_names, colnames(val_data))]
-val_label  <- as.data.frame(as.numeric(temp_val$consensuscluster))
-val_matrix <- xgb.DMatrix(data = as.matrix(val_data), label = as.matrix(val_label-1))
-```
-
-
-```{r}
-# Predict hold-out test set
-val_pred <- predict(xgmodel$learner.model, newdata = val_matrix)
-
-
-numberOfClasses <- 2
-
-val_prediction <- matrix(val_pred, nrow = 1,
-                          ncol=length(val_pred)) %>%
-  t() %>%
-  data.frame() %>%
-  mutate(label = val_label,
-         max_prob = max.col(., "last"))
-# confusion matrix of test set
-confusionMatrix(factor(val_prediction$max_prob),
-                factor(as.integer(c(as.vector(t(val_prediction$label-1))[-146]))),
-                mode = "everything")
-```
-
 ### Results of the validation set classification
-
-First, we integrate both labels, consensus clustering and classification cluster labels to the validation genes datasets.
-```{r}
-# Add the labels to the gene expression validation dataseet
-val_data_w_labels <- val_data
-val_data_w_labels$pred_clusters <- factor(val_prediction$max_prob)
-val_data_w_labels$consensus_clusters <- factor(as.integer(as.vector(t(val_prediction$label-1))))
-
-# Order the rows to match with the original PCA validation dataset
-#val_data_w_labels <- val_data_w_labels[row.names(as.data.frame(list(x_val[["x"]][,1:PCs_to_keep_val]))),]
-val_data_w_labels <- val_data_w_labels[row.names(as.data.frame(list(x_val[["x"]]))),]
-
-# Add the clustering labels to the PCA validation set
-val_data_pca <- do.call("cbind", list(x_val[["x"]][,1:PCs_to_keep_val], as.data.frame(val_data_w_labels$pred_clusters), as.data.frame(val_data_w_labels$consensus_clusters)))
-```
-
-Let's review the labels assigned to each of the two validation clusters defined in the clustering step of the pipeline. We will assign the cluster label based on a "voting system", in which the label with the majority of "votes" (frequency) will be selected for each cluster.
-```{r}
-# Validation set
-
-# Cluster 1 results
-table(val_data_w_labels[val_data_w_labels$consensus_clusters == 1,]$pred_clusters)*100/sum(as.numeric(val_data_w_labels[val_data_w_labels$consensus_clusters == 1,]$pred_clusters))
-
-# Cluster 2 results
-table(val_data_w_labels[val_data_w_labels$consensus_clusters == 2,]$pred_clusters)*100/sum(as.numeric(val_data_w_labels[val_data_w_labels$consensus_clusters == 2,]$pred_clusters))
-```
-
-
-
-```{r}
-library(ggpubr)
-library(dplyr)
-
-train_data_pca <- do.call("cbind", list(x_train[["x"]][,1:PCs_to_keep],as.data.frame(x_train$cluster)))
-
-# Scatter plot on the training dataset
-ggscatter(
-  train_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "x_train$cluster",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_train[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_train[2], "% )")
-) +
-  stat_mean(aes(color = `x_train$cluster`), size = 4)
-
-# Scatter plot on the validation dataset for the consensus clusters
-ggscatter(
-  val_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "val_data_w_labels$consensus_clusters",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-) +
-  stat_mean(aes(color = `val_data_w_labels$consensus_clusters`), size = 4)
-
-# Scatter plot on the validation dataset for the classification clusters
-ggscatter(
-  val_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "val_data_w_labels$pred_clusters",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-) +
-  stat_mean(aes(color = `val_data_w_labels$pred_clusters`), size = 4)
-```
-
-**Clinical information of the validation set**
-```{r}
-# Order the dataset to match the original clinical dataset
-val_data_ordered_clin <- val_data_w_labels[row.names(RNA_clin_data_val),]
-
-# Add the clustering labels to the RNA_clin validation set
-val_data_RNA_clin <- do.call("cbind", list(RNA_clin_data_val, as.data.frame(val_data_ordered_clin$pred_clusters), as.data.frame(val_data_ordered_clin$consensus_clusters)))
-
-val_data_RNA_clin$consensuscluster<- val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`
-```
 
 
 **Correlation analysis between validation set and the training set clusters**
 ```{r}
 ## Race
 x <- t(table(RNA_clin_data[c("consensuscluster","race")]))
-y_consensus <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$consensus_clusters","Race")]))
-y_classif <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$pred_clusters","Race")]))
+y_classif <- t(table(RNA_clin_data_merged_val[c("predicted_clusters","Race")]))
 
 print("RACE")
 print(x)
-print(y_consensus)
 print(y_classif)
 
 print("*** C1 T vs C1 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"1"], y_classif[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("white", "african american"),"1"], y_consensus[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("white", "african american"),"1"], y_consensus[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
 
 print("*** C2 T vs C2 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"2"], y_classif[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("white", "african american"),"2"], y_consensus[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("white", "african american"),"2"], y_consensus[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"3"], y_classif[c("white", "african american"),"3"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
 
 ## Stage
 x <- t(table(RNA_clin_data[c("consensuscluster","tumor_stage")]))
-y_consensus <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$consensus_clusters","Stage")]))
-y_classif <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$pred_clusters","Stage")]))
+y_classif <- t(table(RNA_clin_data_merged_val[c("predicted_clusters","Stage")]))
 
 print("STAGE")
 print(x)
-print(y_consensus)
 print(y_classif)
 
 print("*** C1 T vs C1 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"1"], y_classif[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("1", "2", "3"),"1"], y_consensus[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("1", "2", "3"),"1"], y_consensus[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
 
 print("*** C2 T vs C2 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"2"], y_classif[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("1", "2", "3"),"2"], y_consensus[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("1", "2", "3"),"2"], y_consensus[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"3"], y_classif[c("1", "2", "3"),"3"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
 
@@ -1731,114 +1345,34 @@ print("-----------------------")
 # training clinical data
 age_c1_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="1",c("consensuscluster","age")], summary)))
 age_c2_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="2",c("consensuscluster","age")], summary)))
-age_c3_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="3",c("consensuscluster","age")], summary)))
-x <- as.data.frame(cbind(age_c1_consensus$age, age_c2_consensus$age, age_c3_consensus$age), row.names = row.names(age_c1_consensus))
+x <- as.data.frame(cbind(age_c1_consensus$age, age_c2_consensus$age), row.names = row.names(age_c1_consensus))
 x <- x[1:6,]
 
 # validation classification data
-age_c1_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="1",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-age_c2_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="2",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-age_c3_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="3",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-y_classif <- as.data.frame(cbind(age_c1_classif_val$Age, age_c2_classif_val$Age, age_c3_classif_val$Age), row.names = row.names(age_c1_classif_val))
-
-# validation consensus data
-age_c1_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="1",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-age_c2_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="2",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-age_c3_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="3",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-y_consensus <- as.data.frame(cbind(age_c1_consensus_val$Age, age_c2_consensus_val$Age, age_c3_consensus_val$Age), row.names = row.names(age_c1_consensus_val))
+age_c1_classif_val <- as.data.frame(do.call(cbind, lapply(RNA_clin_data_merged_val[RNA_clin_data_merged_val$predicted_clusters=="1",c("predicted_clusters","Age")], summary)))
+age_c2_classif_val <- as.data.frame(do.call(cbind, lapply(RNA_clin_data_merged_val[RNA_clin_data_merged_val$predicted_clusters=="2",c("predicted_clusters","Age")], summary)))
+y_classif <- as.data.frame(cbind(age_c1_classif_val$Age, age_c2_classif_val$Age), row.names = row.names(age_c1_classif_val))
 
 
 print("AGE")
 print(x)
-print(y_consensus)
 print(y_classif)
 
 
 print("*** C1 T vs C1 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[,"V1"], y_classif[,"V1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[,"V1"], y_consensus[,"V1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[,"V1"], y_consensus[,"V1"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
 
 print("*** C2 T vs C2 V")
 
 print(paste0("Corr. classification results vs training: ", cor(x[,"V2"], y_classif[,"V2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[,"V2"], y_consensus[,"V2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[,"V2"], y_consensus[,"V2"], method = "pearson", use = "complete.obs")))
 
 print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[,"V3"], y_classif[,"V3"], method = "pearson", use = "complete.obs")))
-
 ```
-
-
-## Consensus clustering and K- Means clustering results
-
-Plotting Consensus Clustering results
-```{r}
-library(ggpubr)
-library(dplyr)
-
-# Training
-ggscatter(
-    data_train_consensus_clusters,
-    x = "PC1",
-    y = "PC2",
-    color = "consensuscluster",
-    palette = "npg",
-    ellipse = TRUE,
-    ellipse.type = "convex",
-    size = 1.5,
-    legend = "right",
-    ggtheme = theme_bw(),
-    xlab = paste0("Dim 1 (", variance.percent_train[1], "% )"),
-    ylab = paste0("Dim 2 (", variance.percent_train[2], "% )")
-) +
-    stat_mean(aes(color = "consensuscluster"), size = 4)
-
-# Validation
-# ggscatter(
-#     data_val_consensus_clusters,
-#     x = "PC1",
-#     y = "PC2",
-#     color = "consensuscluster",
-#     palette = "npg",
-#     ellipse = TRUE,
-#     ellipse.type = "convex",
-#     size = 1.5,
-#     legend = "right",
-#     ggtheme = theme_bw(),
-#     xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-#     ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-# ) +
-#     stat_mean(aes(color = "consensuscluster"), size = 4)
-```
-The overlap among clusters is evident between the PC1 and PC2 after performing K-means clustering. After visual evaluation, K Means clustering annotation seems more delimited. Regardless, we need to take into consideration that conensus clustering is a more robust method that diminishes the biases that k-means property of forcing exclusive clustering may create. Therefore, we will proceed with the consensus clustering annotation.
-
-```{r}
-# setting the data frames in a list
-list_of_data = list(temp, RNA_clin_data)
-# list_of_data_val = list(temp_val, RNA_clin_data_val)
-
-# this will get the intersection of the row.names for everything in the list
-common_names = Reduce(intersect, lapply(list_of_data, row.names))
-# common_names_val = Reduce(intersect, lapply(list_of_data_val, row.names))
-
-common_names
-# common_names_val
-```
-
-By looking at the previous plot, we confirm (once again), that the
-clustering was not biased due to the difference in data sources and gene
-expression techniques.
 
 ## Clinical data visualization per cluster
-
 ### Plotting categorical and numeric variables per cluster
 
 ```{r}
@@ -1849,7 +1383,9 @@ clinical_plots(RNA_clin_data, clinical_vars_names, "counts", 2)
 ```
 
 ```{r}
-clinical_plots(RNA_clin_data_val, clinical_vars_names_val, "counts", 4)
+RNA_clin_data_merged_val$consensuscluster <- RNA_clin_data_merged_val$predicted_clusters
+
+clinical_plots(RNA_clin_data_merged_val, clinical_vars_names_val, "counts", 2)
 ```
 
 ## Survival Plot
@@ -1941,7 +1477,7 @@ summary(fit.coxph)
 Take a look at the clinical data.
 ```{r}
 RNA_clin_data[0:10, clinical_vars_names] 
-RNA_clin_data_val[0:10, clinical_vars_names_val] 
+RNA_clin_data_merged_val[0:10, clinical_vars_names_val] 
 ```
 
 ```{r}
@@ -1963,10 +1499,10 @@ clinical_test(
 
 clinical_test(
   variable_name = "Age",
-  clinical_df =  RNA_clin_data_val,
+  clinical_df =  RNA_clin_data_merged_val,
   formula = consensuscluster ~ Age,
   predictor_type = "numerical",
-  4
+  2
 )
 ```
 
@@ -2083,10 +1619,10 @@ clinical_test(
 
 clinical_test(
   variable_name = "Stage",
-  clinical_df =  RNA_clin_data_val,
+  clinical_df =  RNA_clin_data_merged_val,
   formula = consensuscluster ~ Stage,
   predictor_type = "categorical",
-  4
+  2
 )
 ```
 
@@ -2106,10 +1642,10 @@ clinical_test(
 
 clinical_test(
   variable_name = "Race",
-  clinical_df =  RNA_clin_data_val,
+  clinical_df =  RNA_clin_data_merged_val,
   formula = consensuscluster ~ Race,
   predictor_type = "categorical",
-  4
+  2
 )
 ```
 
@@ -2277,7 +1813,7 @@ library(dplyr)
 ### Running the mutation analysis function
 
 ```{r}
-mutation_analysis_res <- mutation_analysis(merged_mut, RNA_seq_merged_allgenes, 3, annon_train)
+mutation_analysis_res <- mutation_analysis(merged_mut, RNA_seq_merged_allgenes, 2, annon_train)
 ```
 
 ### T-test mutations merged
@@ -2287,6 +1823,76 @@ We run a t-test to know which genes change according to the mutations
 mut_rna_test = mutation_t_test(mutation_analysis_res$mut_matrix_rna, 
                                mutation_analysis_res$rna_mut)
 ```
+
+```{r}
+
+mut_matrix_rna <- rowMeans(mutation_analysis_res$mut_matrix_rna)
+mut_matrix_rna <- as.data.frame(mut_matrix_rna)
+colnames(mut_matrix_rna) <- c("mut_counts")
+
+rna_mut <- rowMeans(tidyr::drop_na(mutation_analysis_res$rna_mut[rownames(mutation_analysis_res$mut_matrix_rna),]))
+rna_mut <- as.data.frame(rna_mut)
+colnames(rna_mut) <- c("mut_counts")
+
+
+mut_rna_test <- c()
+mut_rna_test_names <- c()
+for (i in 1:nrow(mut_matrix_rna)) {
+  # we apply the function "function(x)" to each of the row values of rna_mut where each row value is x
+  aux_mut_test <- t(sapply(1:nrow(rna_mut), function(x) {
+    # mutation: the mutation row (presence or absence of mutation per gene sequence)
+    # exp: the gene row of the rna_mut matrix
+    temp_df <-  data.frame(mut = mut_matrix_rna[i,],
+                           exp = as.matrix(rna_mut)[x,])
+    print('mut_matrix_rna----')
+    print(as.matrix(rna_mut)[x,])
+    print('rna_mut----')
+    print(as.matrix(rna_mut)[x,])
+    
+    temp_df <- na.omit(temp_df)
+    
+    if (length(temp_df) > 0 && length(unique(temp_df$mut)) == 2) {
+      aux_test <-
+        t.test(
+          formula = exp ~ mut,
+          data = temp_df
+        )
+      aux_test <- aux_test$p.value
+    }
+  }))
+  
+  mut_rna_test_names <- c(sapply(1:nrow(rna_mut), function(x) {
+    # mutation: the mutation row (presence or absence of mutation per gene sequence)
+    # exp: the gene row of the rna_mut matrix
+    temp_df <-  data.frame(mut = mut_matrix_rna[i,],
+                           exp = as.matrix(rna_mut)[x,])
+    temp_df <- na.omit(temp_df)
+    
+    if (length(temp_df) > 0 && length(unique(temp_df$mut)) == 2) {
+      mut_rna_test_names <- paste(rownames(mut_matrix_rna)[i], rownames(rna_mut),sep = "_")
+    }
+  }))
+  
+  # appending each test into a vector
+  print('-----------')
+  print(i)
+  print(aux_mut_test)
+  mut_rna_test <- c(mut_rna_test, mean(unlist(aux_mut_test)))
+}
+```
+
+```{r}
+# we save the P values and FDR of each test
+#mut_rna_test <- unlist(mut_rna_test)
+mut_rna_test <- cbind(mut_rna_test, p.adjust(mut_rna_test, method='fdr'))
+colnames(mut_rna_test) <- c("p_value", "fdr")
+rownames(mut_rna_test) <- mut_rna_test_names
+
+# we order the resulting matrix by P value
+mut_rna_test <- mut_rna_test[order(mut_rna_test[, "p_value"]), ]
+```
+
+
 
 Export the data frame with the p-values to a csv file
 ```{r}
@@ -2426,934 +2032,7 @@ plt <-
 ```
 
 
-## DEGs (Differentially expressed genes among clusters)
 
-TODO: Check the final results of the clusters expressions vs the
-resulting DEGs, we expect to have maximum one NA per row.
-```{r}
-library(limma)
-
-design <- model.matrix( ~ 0 + RNA_clin_data$consensuscluster)
-design[0:10, ]
-```
-
-```{r}
-## the column names are a bit ugly, so we will rename
-colnames(design) <- c("Cluster1", "Cluster2")
-design[0:10, ]
-```
-
-It has been demonstrated that our power to detect differential
-expression can be improved if we filter lowly-expressed genes prior to
-performing the analysis. Quite how one defines a gene being expressed
-may vary from experiment to experiment, so a cut-off that will work for
-all datasets is not feasible. Here we consider that around 50% of our
-genes will not be expressed, and use the median expression level as a
-cut-off.
-```{r}
-RNA_seq_exprs <-
-  RNA_seq_merged_allgenes[which(rownames(RNA_seq_merged_allgenes) != "consensuscluster"),]
-
-RNA_seq_exprs <- RNA_seq_exprs[,!names(RNA_seq_exprs) %in% c(clinical_vars_names, clinical_vars_names_val, "Surv_months")]
-
-RNA_seq_exprs <-
-  mutate_all(data.frame(RNA_seq_exprs), function(x)
-    as.numeric(as.character(x)))
-
-summary(RNA_seq_exprs[, 1:10])
-
-## calculate median expression level
-temp_median <- apply(RNA_seq_exprs, 2, median)
-cutoff <- median(temp_median, na.rm = T)
-
-## TRUE or FALSE for whether each gene is "expressed" in each sample
-is_expressed <- RNA_seq_exprs > cutoff
-
-## Identify genes expressed in more than 2 samples
-keep <- colSums(is_expressed) > 2
-
-## check how many genes are removed / retained.
-table(keep)
-
-## subset to just those expressed genes
-RNA_seq_exprs <- RNA_seq_exprs[,row.names(as.data.frame(keep))]
-```
-
-The lmFit function is used to fit the model to the data. The result of
-which is to estimate the expression level in each of the groups that we
-specified.
-```{r}
-RNA_seq_exprs_no_consensuscluster <-
-  t(RNA_seq_exprs)[!(row.names(t(RNA_seq_exprs)) %in% c("consensuscluster")), ]
-
-## calculate relative array weights
-aw <- arrayWeights(RNA_seq_exprs_no_consensuscluster, design)
-aw[0:10]
-
-fit <-
-  limma::lmFit(RNA_seq_exprs_no_consensuscluster, design, weights = aw)
-fit$coefficients[1:10, ]
-```
-
-In order to perform the differential analysis, we have to define the
-contrast that we are interested in. In our case we only have two groups
-and one contrast of interest. Multiple contrasts can be defined in the
-makeContrasts function.
-```{r}
-contrasts_c1c2 <- makeContrasts(Cluster1 - Cluster2, levels = design)
-
-fitc1c2 <- contrasts.fit(fit, contrasts_c1c2)
-```
-
-Finally, apply the empirical Bayes' step to get our differential
-expression statistics and p-values.
-```{r}
-fitc1c2 <- eBayes(fitc1c2)
-```
-
-We usually get our first look at the results by using the topTable
-command
-```{r}
-topTable(fitc1c2)
-```
-
-If we want to know how many genes are differentially-expressed overall
-we can use the decideTests function.
-
-\*\* Cluster1 - Cluster 2
-```{r}
-decideTests(fitc1c2)
-```
-
-```{r}
-table(decideTests(fitc1c2))
-```
-
-### Further processing and visualisation of DE results
-
-At the moment our results are not particularly easy to navigate as the
-only information to identify each gene is the identifier that the
-microarray manufacturer has assigned. Fortunately, the GEO entry
-contains extensive annotation that we can add. The annotation data can
-be retrieved with the fData function and we restrict to columns we are
-interested in using select.
-
-For your own data, you will have to choose the columns that are of
-interest to you. You probably won't have the same column headings used
-here.
-
-Once an annotation data frame has been created, it can be assigned to
-our results.
-```{r}
-full_resultsc1c2 <- topTable(fitc1c2, number = Inf)
-full_resultsc1c2 <- tibble::rownames_to_column(full_resultsc1c2, "ID")
-```
-
-The "Volcano Plot" function is a common way of visualising the results
-of a DE analysis. The x axis shows the log-fold change and the y axis is
-some measure of statistical significance, which in this case is the
-log-odds, or "B" statistic. A characteristic "volcano" shape should be
-seen.
-
-First we create a data frame that we can visualise in ggplot2.
-Specifying the number argument to topTable creates a table containing
-test results from all genes. We also put the probe IDs as a column
-rather than row names.
-
-The flexibility of ggplot2 allows us to automatically label points on
-the plot that might be of interest. For example, genes that meet a
-particular p-value and log fold-change cut-off. With the code below the
-values of p_cutoff and fc_cutoff can be changed as desired.
-
-Furthermore, we can label the identity of some genes. Below we set a
-limit of the top "N" genes we want to label, and label each gene
-according to it's Symbol.
-```{r}
-library(ggrepel)
-
-## change according to your needs
-p_cutoff <- 0.001
-fc_cutoff <- 2
-topN <- 20
-```
-
-Cluster 1 vs Cluster 2
-```{r}
-full_resultsc1c2 %>%
-  mutate(Significant = p.adjust(P.Value, method="fdr") < p_cutoff, abs(logFC) > fc_cutoff) %>%
-  mutate(Rank = 1:n(), Label = ifelse(Rank < topN, ID, "")) %>%
-  ggplot(aes(
-    x = logFC,
-    y = -log10(P.Value),
-    col = Significant,
-    label = Label
-  )) + geom_point() + geom_text_repel(col = "black")
-```
-
-We can filter according to p-value (adjusted) and fold-change cut-offs
-```{r}
-sign_genes_c1c2 <- filter(full_resultsc1c2, adj.P.Val < p_cutoff)
-```
-
-We save the results
-```{r}
-library(readr)
-full_resultsc1c2 %>%
-  write_csv(file="complete_DEGs_results_c1c2_13_jan_23.csv")
-```
-
-Comparing the deferentially expressed genes between all the clusters
-```{r}
-significant_genes12 <- filter(full_resultsc1c2, p.adjust(P.Value, method="fdr") < p_cutoff)$ID
-
-significant_genes <- unique(significant_genes12)
-
-cc1 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 1])
-cc2 <- colMeans(RNA_seq_exprs[RNA_seq_exprs$consensuscluster == 2])
-
-temp <-
-  cbind(cc1[significant_genes], cc2[significant_genes])
-
-rownames(temp) <- significant_genes
-colnames(temp) <- c("cluster1", "cluster2")
-
-temp
-```
-
-### Heatmaps of selected genes
-
-**Most differentially-expressed genes** We have already created a table
-of differential expression results, which is ranked according to
-statistical significance.
-
-To visualise the most differentially-expressed genes, we first need to
-extract their ID. These IDs should correspond to rows in the expression
-matrix.
-
-In the code below we introduce a new column to the results which just
-gives a row number to each gene. We then filter to return data for the
-top N results. The pull function is used to extract the ID column as a
-variable.
-```{r}
-## Use to top 20 genes for illustration
-topN <- 20
-
-##
-ids_of_interest12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>%
-  filter(Rank < topN) %>%
-  pull(ID)
-```
-
-In order to label the heatmap in a useful manner we extract the
-corresponding gene symbols.
-```{r}
-gene_names12 <- mutate(full_resultsc1c2, Rank = 1:n()) %>% 
-  filter(Rank < topN) %>% 
-  pull(ID)
-```
-
-The expression values for the IDs we have retrieved can be obtained by
-using the [..] notation to index the expression matrix.
-```{r}
-## Get the rows corresponding to ids_of_interest and all columns
-gene_matrix12 <- t(RNA_seq_exprs)[ids_of_interest12,]
-```
-
-We now make the heatmap. A default colour scheme is used, but can be
-changed via the arguments.
-```{r}
-pheatmap(gene_matrix12[,1:20],
-     labels_row = gene_names12,
-     scale="row")
-```
-
-## Classification model
-
-Split the original dataset into stratified train and test sets. The stratification will be made based on the cluster column.
-```{r}
-# First, install and load the randomForest package
-library(randomForest)
-
-## Split the data into a training set and a test set
-
-# First, we identify the intersecting genes between the training and validation gene datasets, we keep only the common genes
-common_cols_train_val <- intersect(colnames(RNA_seq_merged_allgenes), colnames(RNA_seq_allgenes_val))
-
-# We filter to keep only the DEGs found in the training dataset
-common_cols_train_val_DEGs <- intersect(common_cols_train_val, significant_genes)
-
-classif_train <-
-  RNA_seq_merged_allgenes[, colnames(RNA_seq_merged_allgenes) %in% c(common_cols_train_val_DEGs, "consensuscluster")]
-classif_val <- RNA_seq_allgenes_val[, colnames(RNA_seq_allgenes_val) %in% c(common_cols_train_val_DEGs)]
-
-# Now, we remove the clinical information to generate the classification model based on gene expression
-classif_train_genes <-
-  classif_train[, !colnames(classif_train) %in% c(clinical_vars_names, clinical_vars_names_val, "Surv_months")]
-classif_val <- classif_val[,!colnames(classif_val) %in% c(clinical_vars_names, clinical_vars_names_val, "Surv_months")]
-
-# Split data into partitions
-set.seed(123)
-classif_train_split <-
-  partition(classif_train_genes$consensuscluster,
-            p = c(train = 0.8, test = 0.2))
-# We split the origial dataframe based on the split recommendation
-train_split <- classif_train_genes[classif_train_split$train,]
-test_split <- classif_train_genes[classif_train_split$test,]
-
-# We verify the quantity of samples per cluster of each split
-table(train_split$consensuscluster)
-table(test_split$consensuscluster)
-
-# Train the random forest
-rf_model <- randomForest(consensuscluster ~ ., data = train_split, ntree = 100, mtry = 2)
-
-# Make predictions on the test set
-predictions <- predict(rf_model, newdata = test_split)
-
-# Evaluate the performance of the model
-library(caret)
-confusionMatrix(predictions, test_split$consensuscluster)
-
-```
-
-#### Classifying the validation dataset
-```{r}
-# Make predictions on the test set
-predictions_val <- as.data.frame(predict(rf_model, newdata = classif_val))
-colnames(predictions_val) <- c("predicted_clusters")
-
-head(predictions_val)
-```
-
-Adding the cluster annotation to the total validation genes data frame
-```{r}
-# Genes and clustering
-RNA_seq_merged_allgenes_val <-
-  merge(t(val_mad), predictions_val, by = "row.names", all.x = TRUE)
-rownames(RNA_seq_merged_allgenes_val) <-
-  t(RNA_seq_merged_allgenes_val["Row.names"])
-RNA_seq_merged_allgenes_val = subset(RNA_seq_merged_allgenes_val, select = -c(`Row.names`))
-
-# PCs and clustering
-PCs_val <- merge(x_val[["x"]][,1:PCs_to_keep_val], predictions_val, by = "row.names", all.x = TRUE)
-rownames(PCs_val) <- t(PCs_val["Row.names"])
-PCs_val = subset(PCs_val, select = -c(`Row.names`))
-
-# Clinical variables
-RNA_clin_data_val <-
-  merge(RNA_clin_data_val, predictions_val, by = "row.names")
-rownames(RNA_clin_data_val) <-
-  t(RNA_clin_data_val["Row.names"])
-RNA_clin_data_val = subset(RNA_clin_data_val, select = -c(`Row.names`))
-```
-
-Plotting classification results
-```{r}
-library(ggpubr)
-library(dplyr)
-
-# Add clusters obtained using the K-means algorithm for validation
-x_val$cluster <- factor(RNA_clin_data_val$cluster)
-eigenvalue_val <- round(get_eigenvalue(x_val), 1)
-variance.percent_val <- eigenvalue_val$variance.percent
-
-# Validation
-ggscatter(
-    PCs_val,
-    x = "PC1",
-    y = "PC2",
-    color = "predicted_clusters",
-    palette = "npg",
-    ellipse = TRUE,
-    ellipse.type = "convex",
-    size = 1.5,
-    legend = "right",
-    ggtheme = theme_bw(),
-    xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-    ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-) +
-    stat_mean(aes(color = "predicted_clusters"), size = 4)
-```
-
-```{r}
-library(splitTools)
-library(ranger)
-
-# First, we identify the intersecting genes between the training and validation gene datasets, we keep only the common genes
-common_cols_train_val <- intersect(colnames(RNA_seq_merged_allgenes), colnames(RNA_seq_allgenes_val))
-
-# We filter to keep only the DEGs found in the training dataset
-common_cols_train_val_DEGs <- intersect(common_cols_train_val, significant_genes)
-
-classif_train <- RNA_seq_merged_allgenes[,names(RNA_seq_merged_allgenes) %in% c(common_cols_train_val_DEGs, "consensuscluster")]
-classif_val <- RNA_seq_allgenes_val[,names(RNA_seq_allgenes_val) %in% c(common_cols_train_val_DEGs)]
-
-# Now, we remove the clinical information to generate the classification model based on gene expression
-classif_train_genes <- classif_train[,!names(classif_train) %in% c(clinical_vars_names, clinical_vars_names_val, "Surv_months")]
-classif_val <- classif_val[,!names(classif_val) %in% c(clinical_vars_names, clinical_vars_names_val, "Surv_months")]
-
-# Split data into partitions
-set.seed(123)
-classif_train_split <- partition(classif_train_genes$consensuscluster, p = c(train = 0.8, test = 0.2))
-
-# We split the origial dataframe based on the split recommendation
-train_split <- classif_train_genes[classif_train_split$train, ]
-test_split <- classif_train_genes[classif_train_split$test, ]
-
-# We verify the quantity of samples per cluster of each split
-table(train_split$consensuscluster)
-table(test_split$consensuscluster)
-```
-
-
-
-
-
-
-
-We can observe that the ratio of samples per class is consistent in both, the training and test sets.
-
-Pre-processing training data: Standardize predictors after log-transformation.
-```{r}
-# Standardize predictors after log-transformation.
-train_classif <- train_classif_orig[,!names(train_classif_orig) %in% c("consensuscluster")]
-
-# Mean
-meanx <- colMeans(train_classif)
-one <- rep(1,nrow(train_classif))
-normx <- sqrt(drop(one %*% as.matrix(train_classif^2)))
-train_classif <- as.data.frame(scale(train_classif, meanx, normx))
-
-# Adding the cluster column
-train_classif$cluster <- train_classif_orig$consensuscluster
-head(train_classif)
-
-# Compute a marginal relevance measure
-a0 <- b0 <- 0
-tmp <- train_classif
-nx <- dim(train_classif_orig)[2]
-
-for(k in 1:length(table(train_classif$cluster))) {
-  tmp1 <- subset(train_classif_orig, train_classif_orig[, nx] == k)
-  xc.bar <- colMeans(tmp1[, -nx]) ###average of gene j across class k
-  xa.bar <-
-    colMeans(tmp[, -nx]) ###average of gene j across all samples
-  a0 <- a0 + dim(tmp1)[1] * ((xc.bar - xa.bar) ^ 2)
-  b0 <- b0 + colSums((train_classif_orig[, -nx] - xc.bar) ^ 2)
-}
-
-bw <- a0/b0
-npre <- nx - 1 ### use all genes and ignore bw values
-bw1 <- order(bw, decreasing=TRUE)[1:npre]
-```
-
-Preprocessing the testing data
-```{r}
-test_classif <- scale(test_classif_orig[,!names(test_classif_orig) %in% c("consensuscluster")], meanx, normx)[, bw1]
-test_classif <- cbind(test_classif, test_classif_orig$consensuscluster)
-test_classif <- as.data.frame(test_classif)
-```
-
-
-### Option 1: Using BST
-Multi-class HingeBoost is applied for 200 boosting iterations. Plot the evolution
-of the misclassification error on the test data versus the iteration counter, as
-the multi-class HingeBoost algorithm proceeds while working on the test set.
-```{r}
-library(bst)
-
-train_classif$cluster <- as.numeric(train_classif$cluster)
-test_classif$V630 <- as.numeric(test_classif$V630)
-
-m1 <- m2 <- 200
-dat.m1 <- mhingebst(x=train_classif, y=train_classif$cluster, ctrl = bst_control(mstop=m1), family = "hinge", learner = c("ls"))
-
-risk.te1 <- predict(dat.m1, newdata=test_classif, newy=test_classif$V630, mstop=m1, type="error")
-plot(risk.te1, type="l", xlab="Iteration", ylab="Test Error")
-```
-Then, we plot the evolution of the number of genes selected versus the iteration counter.
-```{r}
-plot(nsel(dat.m1, m1), ylab="Number of PCs", xlab="Iteration", lty="solid", type="l")
-```
-
-Multi-class twin HingeBoost is applied based on the results from the first
-round HingeBoost for 150 iterations. Plot the evolution of the misclassification error on the test data versus the iteration counter, as the multi-class twin
-HingeBoost algorithm proceeds while working on the test set.
-```{r}
-fhat1 <- predict(dat.m1, mstop=150, type="response")
-xinit <- unlist(dat.m1$ensemble[1:150])
-xinit <- subset(xinit, !is.na(xinit))
-
-### How many genes selected with mstop=150
-length(unique(xinit))
-dat.m2 <- mhingebst(x=train_classif, y=train_classif$cluster, ctrl = bst_control(mstop=m2,
-twinboost=TRUE, f.init=fhat1, xselect.init=xinit), family = "hinge", learner = "ls")
-risk.te1 <- predict(dat.m2, newdata=test_classif, newy=test_classif$V630, mstop=m2, type="error")
-plot(risk.te1, type="l", xlab="Iteration", ylab="Test Error")
-```
-Plot the evolution of the number of genes selected versus the iteration
-counter, as the multi-class twin HingeBoost algorithm proceeds while working on the training set.
-```{r}
-plot(nsel(dat.m2, m2), ylab="Number of PCs", xlab="Iteration", lty="solid", type="l")
-```
-
-### Option 2: Using XGBoost
-
-Load packages
-```{r}
-library("xgboost")  # the main algorithm
-library("archdata") # for the sample dataset
-library("caret")    # for the confusionmatrix() function (also needs e1071 package)
-library("dplyr")    # for some data preperation
-library("Ckmeans.1d.dp") # for xgb.ggplot.importance
-```
-
-**Preprocess training and test data to feed the XGBoost model**
-```{r}
-# split train data and make xgb.DMatrix
-train_data   <- train_classif_orig[, !names(train_classif_orig) %in% ("consensuscluster")]
-train_label  <- as.data.frame(as.numeric(train_classif_orig$consensuscluster))
-train_matrix <- xgb.DMatrix(data = as.matrix(train_data), label = as.matrix(train_label-1))
-
-# split test data and make xgb.DMatrix
-test_data  <- test_classif_orig[, !names(test_classif_orig) %in% ("consensuscluster")]
-test_label <- as.data.frame(as.numeric(test_classif_orig$consensuscluster))
-test_matrix <- xgb.DMatrix(data = as.matrix(test_data), label = as.matrix(test_label-1))
-
-# creating a scaler based on the training set
-#X_train_scaled = scale(train_data)
-
-# applying the scaler to the test seet
-#X_test_scaled = scale(
-#  test_data,
-#  center = attr(X_train_scaled, "scaled:center"),
-#  scale = attr(X_train_scaled, "scaled:scale")
-#)
-```
-
-
-K-folds Cross-validation to Estimate Error
-```{r}
-set.seed(1)
-
-#numberOfClasses <- 2
-
-xgb_params <- list(booster = "gbtree",
-                   objective = "binary:logistic")
-
-nround    <- 100 # number of XGBoost rounds
-cv.nfold  <- 25
-
-# Fit cv.nfold * cv.nround XGB models and save OOF predictions
-cv_model <- xgb.cv(params = xgb_params,
-                   data = train_matrix, 
-                   nrounds = nround,
-                   nfold = cv.nfold,
-                   verbose = TRUE,
-                   prediction = TRUE,
-                   early_stopping_rounds = 20,
-                   stratified = TRUE,
-                   print_every_n = 10)
-```
-
-**Assess Out-of-Fold Prediction Error**
-To assess prediction error, we used the data returned from the pred slot of the cv_model object. The pred object contains the predicted value for each observation in our train dataset when it was in the kth fold, known as the out-of-fold sample. This sample was not used to train the model so therefore acts as an independent sample for testing (all caveats about k-folds CV apply!). This step allows us to derived an error estimate on all of our train samples as if the were independent from the model fit.
-```{r}
-OOF_prediction <- data.frame(cv_model$pred) %>%
-  mutate(max_prob = max.col(., ties.method = "last"),
-         label = train_label)
-head(OOF_prediction)
-```
-
-**Confusion Matrix**
-```{r}
-# confusion matrix
-confusionMatrix(factor(OOF_prediction$max_prob),
-                factor(as.integer(as.vector(t(OOF_prediction$label)))),
-                mode = "everything")
-```
-
-**Assess Test Set Error with CV results**
-As the errors assessed from the CV routine are acceptable and within a reasonable range of variation (e.g. all folds show relatively consistent error rates), we will proceed to the common practice to then fit the full training data set. 
-
-Following the model fit, the test set test_matrix is predicted using the bst_model. The results are transformed into a matrix of class predictions, the max probability is taken, and the true label is added all in the same way as done above for the OOF data. Of note though is that the prediction is returned as a single vector and needs to be transformed back to a matrix with care. Otherwise, the labels will be jumbled and the confusion matrix will show very poor performance.
-```{r}
-bst_model <- xgb.train(params = xgb_params,
-                       data = train_matrix,
-                       nrounds = nround)
-
-numberOfClasses <- 2
-
-# Predict hold-out test set
-test_pred <- predict(bst_model, newdata = test_matrix)
-test_prediction <- matrix(test_pred, nrow = 1,
-                          ncol=length(test_pred)) %>%
-  t() %>%
-  data.frame() %>%
-  mutate(label = test_label,
-         max_prob = max.col(., "last"))
-# confusion matrix of test set
-confusionMatrix(factor(test_prediction$max_prob),
-                factor(as.integer(as.vector(t(test_prediction$label)))-1),
-                mode = "everything")
-```
-
-**Finding the best model: Hyperparameter tuning with Grid Search**
-
-As a final hyperparameter tuning step, it is possible to further improve the performance of our model. Let's proceed to the random / grid search procedure and attempt to find better accuracy. From here on, we'll be using the MLR package for model building. A quick reminder, the MLR package creates its own frame of data, learner as shown below.
-```{r}
-#loading the library
-library(mlr)
-
-# Prepraring the training and test datasets for the Grid Search
-train_data_labels <- train_data
-train_data_labels$labels <- as.factor(as.matrix(train_label) - 1) 
-test_data_labels <- test_data
-test_data_labels$labels <- as.factor(as.matrix(test_label) - 1)
-
-#create tasks
-traintask <- makeClassifTask(data = train_data_labels, target = "labels")
-testtask <- makeClassifTask(data = test_data_labels, target = "labels")
-```
-
-Now, we'll set the learner and fix the number of rounds and eta as discussed above.
-```{r}
-#create learner
-lrn <- makeLearner("classif.xgboost", predict.type = "response")
-lrn$par.vals <-
-  list(
-    objective = "binary:logistic",
-    eval_metric = "error",
-    nrounds = 100L,
-    eta = 0.3
-  )
-
-#set parameter space
-params <-
-  makeParamSet(
-    makeDiscreteParam("booster", values = c("gbtree", "dart")),
-    makeIntegerParam("max_depth", lower = 1L, upper = 10L),
-    makeNumericParam("min_child_weight", lower = 1L, upper = 10L),
-    makeNumericParam("subsample", lower = 0.5, upper = 1),
-    makeNumericParam("colsample_bytree", lower = 0.5, upper = 1)
-  )
-
-#set resampling strategy
-rdesc <- makeResampleDesc("CV", stratify = T, iters = 10L)
-```
-
-With stratify=T, we'll ensure that distribution of target class is maintained in the resampled data sets. If you've noticed above, in the parameter set, I didn't consider gamma for tuning. Simply because during cross validation, we saw that train and test error are in sync with each other. Had either one of them been dragging or rushing, we could have brought this parameter into action.
-Now, we'll set the search optimization strategy. Though, xgboost is fast, instead of grid search, we'll use random search to find the best parameters. In random search, we'll build 10 models with different parameters, and choose the one with the least error. You are free to build any number of models.
-```{r}
-#search strategy
-ctrl <- makeTuneControlRandom(maxit = 20L)
-```
-
-We'll also set a parallel backend to ensure faster computation. Make sure you've not opened several applications in backend. We'll use all the cores in your machine.
-```{r}
-#set parallel backend
-library(parallel)
-library(parallelMap)
-
-parallelStartSocket(cpus = detectCores())
-
-#parameter tuning
-mytune <-
-  tuneParams(
-    learner = lrn,
-    task = traintask,
-    resampling = rdesc,
-    measures = acc,
-    par.set = params,
-    control = ctrl,
-    show.info = T
-  )
-
-# Print the accuracy of the tuned model
-mytune$y 
-```
-
-This newly obtained tuned CV accuracy is better than our default xgboost model. To check the tuning result, write mytune in your R console and press Enter. Let's build a model using tuned parameters and check the final test accuracy.
-```{r}
-#set hyperparameters
-lrn_tune <- setHyperPars(lrn, par.vals = mytune$x)
-
-#train model
-xgmodel <- train(learner = lrn_tune, task = traintask)
-
-#predict model
-xgpred <- predict(xgmodel, testtask)
-```
-
-We've made our predictions on the test set. Let's check our model's accuracy.
-```{r}
-confusionMatrix(xgpred$data$response, xgpred$data$truth)
-```
-
-**Variable Importance**
-The final step in this process, and potentially the first step in a the process of understanding the model, is assessing variable importance. Basically, this is a way of using all the splits in the XGBoost trees to understand how how accurate the classifications are based on the splits. This is quantified with the Gain measurement in the variable importance table obtained from the xgb.importance() function. According to the XGBoost documentation.
-
-The convenient xgb.plot.importance() function takes the Gain information and plots it using ggplot2. The variables are also clustered using k-means clustering that optimizes k based on Bayesian Information Criteria (BIC) for k=3. Here we can see that genes FOXA2, CCND1, STX12, MFAP5, TRIM15, and CFHR1 are apparently the most important in classifying each sample to the accuracy demonstrated by bst_model given the data and hyper-parameters.
-
-```{r}
-# get the feature real names
-names <-  colnames(train_classif_orig[,-1])
-# compute feature importance matrix
-importance_matrix = xgb.importance(feature_names = names, model = xgmodel$learner.model)
-head(importance_matrix)
-```
-
-```{r}
-# plot
-gp = xgb.ggplot.importance(importance_matrix[1:30,], n_clusters = 2)
-print(gp) 
-```
-
-**Predictions on the validation set (unseen information)**
-Pre-processing of validation dataset
-```{r}
-# split val data and make xgb.DMatrix
-val_data   <- temp_val[, !names(temp_val) %in% ("consensuscluster")]
-#val_data <- val_data[intersect(bst_model$feature_names, colnames(val_data))]
-val_label  <- as.data.frame(as.numeric(temp_val$consensuscluster))
-val_matrix <- xgb.DMatrix(data = as.matrix(val_data), label = as.matrix(val_label-1))
-```
-
-
-```{r}
-# Predict hold-out test set
-val_pred <- predict(xgmodel$learner.model, newdata = val_matrix)
-
-
-numberOfClasses <- 2
-
-val_prediction <- matrix(val_pred, nrow = 1,
-                          ncol=length(val_pred)) %>%
-  t() %>%
-  data.frame() %>%
-  mutate(label = val_label,
-         max_prob = max.col(., "last"))
-# confusion matrix of test set
-confusionMatrix(factor(val_prediction$max_prob),
-                factor(as.integer(c(as.vector(t(val_prediction$label-1))[-146]))),
-                mode = "everything")
-```
-
-### Results of the validation set classification
-
-First, we integrate both labels, consensus clustering and classification cluster labels to the validation genes datasets.
-```{r}
-# Add the labels to the gene expression validation dataseet
-val_data_w_labels <- val_data
-val_data_w_labels$pred_clusters <- factor(val_prediction$max_prob)
-val_data_w_labels$consensus_clusters <- factor(as.integer(as.vector(t(val_prediction$label-1))))
-
-# Order the rows to match with the original PCA validation dataset
-#val_data_w_labels <- val_data_w_labels[row.names(as.data.frame(list(x_val[["x"]][,1:PCs_to_keep_val]))),]
-val_data_w_labels <- val_data_w_labels[row.names(as.data.frame(list(x_val[["x"]]))),]
-
-# Add the clustering labels to the PCA validation set
-val_data_pca <- do.call("cbind", list(x_val[["x"]][,1:PCs_to_keep_val], as.data.frame(val_data_w_labels$pred_clusters), as.data.frame(val_data_w_labels$consensus_clusters)))
-```
-
-Let's review the labels assigned to each of the two validation clusters defined in the clustering step of the pipeline. We will assign the cluster label based on a "voting system", in which the label with the majority of "votes" (frequency) will be selected for each cluster.
-```{r}
-# Validation set
-
-# Cluster 1 results
-table(val_data_w_labels[val_data_w_labels$consensus_clusters == 1,]$pred_clusters)*100/sum(as.numeric(val_data_w_labels[val_data_w_labels$consensus_clusters == 1,]$pred_clusters))
-
-# Cluster 2 results
-table(val_data_w_labels[val_data_w_labels$consensus_clusters == 2,]$pred_clusters)*100/sum(as.numeric(val_data_w_labels[val_data_w_labels$consensus_clusters == 2,]$pred_clusters))
-```
-
-
-
-```{r}
-library(ggpubr)
-library(dplyr)
-
-train_data_pca <- do.call("cbind", list(x_train[["x"]][,1:PCs_to_keep],as.data.frame(x_train$cluster)))
-
-# Scatter plot on the training dataset
-ggscatter(
-  train_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "x_train$cluster",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_train[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_train[2], "% )")
-) +
-  stat_mean(aes(color = `x_train$cluster`), size = 4)
-
-# Scatter plot on the validation dataset for the consensus clusters
-ggscatter(
-  val_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "val_data_w_labels$consensus_clusters",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-) +
-  stat_mean(aes(color = `val_data_w_labels$consensus_clusters`), size = 4)
-
-# Scatter plot on the validation dataset for the classification clusters
-ggscatter(
-  val_data_pca,
-  x = "PC1",
-  y = "PC2",
-  color = "val_data_w_labels$pred_clusters",
-  palette = "npg",
-  ellipse = TRUE,
-  ellipse.type = "convex",
-  size = 1.5,
-  legend = "right",
-  ggtheme = theme_bw(),
-  xlab = paste0("Dim 1 (", variance.percent_val[1], "% )"),
-  ylab = paste0("Dim 2 (", variance.percent_val[2], "% )")
-) +
-  stat_mean(aes(color = `val_data_w_labels$pred_clusters`), size = 4)
-```
-
-**Clinical information of the validation set**
-```{r}
-# Order the dataset to match the original clinical dataset
-val_data_ordered_clin <- val_data_w_labels[row.names(RNA_clin_data_val),]
-
-# Add the clustering labels to the RNA_clin validation set
-val_data_RNA_clin <- do.call("cbind", list(RNA_clin_data_val, as.data.frame(val_data_ordered_clin$pred_clusters), as.data.frame(val_data_ordered_clin$consensus_clusters)))
-
-val_data_RNA_clin$consensuscluster<- val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`
-```
-
-
-**Correlation analysis between validation set and the training set clusters**
-```{r}
-## Race
-x <- t(table(RNA_clin_data[c("consensuscluster","race")]))
-y_consensus <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$consensus_clusters","Race")]))
-y_classif <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$pred_clusters","Race")]))
-
-print("RACE")
-print(x)
-print(y_consensus)
-print(y_classif)
-
-print("*** C1 T vs C1 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"1"], y_classif[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("white", "african american"),"1"], y_consensus[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("white", "african american"),"1"], y_consensus[c("white", "african american"),"1"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C2 T vs C2 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"2"], y_classif[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("white", "african american"),"2"], y_consensus[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("white", "african american"),"2"], y_consensus[c("white", "african american"),"2"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("white", "african american"),"3"], y_classif[c("white", "african american"),"3"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-## Stage
-x <- t(table(RNA_clin_data[c("consensuscluster","tumor_stage")]))
-y_consensus <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$consensus_clusters","Stage")]))
-y_classif <- t(table(val_data_RNA_clin[c("val_data_ordered_clin$pred_clusters","Stage")]))
-
-print("STAGE")
-print(x)
-print(y_consensus)
-print(y_classif)
-
-print("*** C1 T vs C1 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"1"], y_classif[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("1", "2", "3"),"1"], y_consensus[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("1", "2", "3"),"1"], y_consensus[c("1", "2", "3"),"1"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C2 T vs C2 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"2"], y_classif[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[c("1", "2", "3"),"2"], y_consensus[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[c("1", "2", "3"),"2"], y_consensus[c("1", "2", "3"),"2"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[c("1", "2", "3"),"3"], y_classif[c("1", "2", "3"),"3"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-## Age
-
-# training clinical data
-age_c1_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="1",c("consensuscluster","age")], summary)))
-age_c2_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="2",c("consensuscluster","age")], summary)))
-age_c3_consensus <- as.data.frame(do.call(cbind, lapply(RNA_clin_data[RNA_clin_data$consensuscluster=="3",c("consensuscluster","age")], summary)))
-x <- as.data.frame(cbind(age_c1_consensus$age, age_c2_consensus$age, age_c3_consensus$age), row.names = row.names(age_c1_consensus))
-x <- x[1:6,]
-
-# validation classification data
-age_c1_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="1",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-age_c2_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="2",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-age_c3_classif_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$pred_clusters`=="3",c("val_data_ordered_clin$pred_clusters","Age")], summary)))
-y_classif <- as.data.frame(cbind(age_c1_classif_val$Age, age_c2_classif_val$Age, age_c3_classif_val$Age), row.names = row.names(age_c1_classif_val))
-
-# validation consensus data
-age_c1_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="1",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-age_c2_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="2",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-age_c3_consensus_val <- as.data.frame(do.call(cbind, lapply(val_data_RNA_clin[val_data_RNA_clin$`val_data_ordered_clin$consensus_clusters`=="3",c("val_data_ordered_clin$consensus_clusters","Age")], summary)))
-y_consensus <- as.data.frame(cbind(age_c1_consensus_val$Age, age_c2_consensus_val$Age, age_c3_consensus_val$Age), row.names = row.names(age_c1_consensus_val))
-
-
-print("AGE")
-print(x)
-print(y_consensus)
-print(y_classif)
-
-
-print("*** C1 T vs C1 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[,"V1"], y_classif[,"V1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[,"V1"], y_consensus[,"V1"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[,"V1"], y_consensus[,"V1"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C2 T vs C2 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[,"V2"], y_classif[,"V2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs training: ", cor(x[,"V2"], y_consensus[,"V2"], method = "pearson", use = "complete.obs")))
-print(paste0("Corr. consensus results vs classification results: ", cor(y_classif[,"V2"], y_consensus[,"V2"], method = "pearson", use = "complete.obs")))
-
-print("-----------------------")
-
-print("*** C3 T vs C3 V")
-
-print(paste0("Corr. classification results vs training: ", cor(x[,"V3"], y_classif[,"V3"], method = "pearson", use = "complete.obs")))
-
-```
 
 ## PATHWAYS
 ### Using the GSVA::gsva method 
@@ -3407,11 +2086,26 @@ topTable(fit_gsea, coef="Cluster1", sort.by = "logFC")
 topTable(fit_gsea, coef="Cluster2", sort.by = "logFC")
 ```
 
-### Using the msigdbr::gsea method.
+### Using the FGSEA method.
+
+Generating the stats dataframe
+```{r}
+# After performing DEG analysis using limma, we gather the results of the fit method after applying TopTable results
+stats <- full_resultsc1c2
+stats <- stats[stats$adj.P.Val < 0.05, ]
+
+p_values <- stats$adj.P.Val
+names(p_values) <- stats$ID
+
+head(stats)
+print(p_values)
+```
+
 
 ```{r}
 library(msigdbr)
 library(fgsea)
+library(stats)
 
 # Load gene expression data
 data <- RNA_seq_exprs[,!colnames(RNA_seq_exprs) %in% c("consensuscluster")]
@@ -3422,9 +2116,68 @@ group <- RNA_seq_exprs$consensuscluster
 # Perform GSEA using msigdbr library
 
 # stats: Ranks resultados de limma del DEGs sobre los genes, basado en el FC (direccion del efecto) * -log10(P value). 
-result <- fgsea(pathways = examplePathways, minSize=15, maxSize=500, stats = exampleRanks)
+result_p_adjusted <- fgsea(pathways = m_list, minSize=15, maxSize=500, stats = adj_p_values, scoreType='pos', eps = 0.0)
+result_p <- fgsea(pathways = m_list, minSize=15, maxSize=500, stats = p_values, scoreType='pos', eps = 0.0)
+#result <- fgsea(pathways = m_list, minSize=15, maxSize=500, stats = p_values, scoreType='pos')
 
-# Print top 5 enriched gene sets
-head(result, 5)
+# Print result based on their adjusted p-values
+head(result[order(padj), ])
+```
+One can make an enrichment plot for a pathway
+```{r}
+plotEnrichment(m_list[["HALLMARK_UV_RESPONSE_UP"]],
+               p_values) + labs(title="Most significative pathway - UV_RESPONSE_UP")
+```
+Or make a table plot for a bunch of selected pathways
+```{r}
+topPathwaysUp <- result[ES > 0][head(order(pval), n=15), pathway]
+topPathwaysDown <- result[ES < 0][head(order(pval), n=15), pathway]
+topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+
+as_ggplot(plotGseaTable(m_list[topPathways], p_values, result))
+```
+
+From the plot above one can see that there are very similar pathways in the table. 
+To select only independent pathways one can use collapsePathways function:
+```{r}
+collapsedPathways <- collapsePathways(result[order(pval)][padj < 0.05], 
+                                      m_list, p_values)
+mainPathways <- result[pathway %in% collapsedPathways$mainPathways][
+                         order(-NES), pathway]
+
+as_ggplot(plotGseaTable(m_list[mainPathways], p_values, result))
+```
+
+
+
+### Perform DEP: Differentially Expressed Pathways
+```{r}
+# Map differentially expressed genes to the pathways
+# Extract gene IDs from DEGs
+deg_gene_ids <- stats$ID
+deg_gene_ids <- as.data.frame(deg_gene_ids)
+
+# Merge DEG gene IDs with MSigDB gene sets, matching on gene IDs
+deg_pathways <- merge(x = human_gene_sets, y = deg_gene_ids, by.x = "gene_symbol", by.y = "deg_gene_ids")
+
+m_list_deg = deg_pathways %>% split(x = .$gene_symbol, f = .$gs_name)
+
+# Perform DEP analysis
+stats_dep_pval <- -log10(stats$P.Value)
+names(stats_dep_pval) <- stats$ID
+#(stats_dep_pval) <- c("P.Value")
+
+stats_dep_logFC <- stats$logFC
+names(stats_dep_logFC) <- stats$ID
+#colnames(stats_dep_logFC) <- c("logFC")
+
+result <- fgsea::fgsea(m_list_deg, stats_dep_logFC, minSize = 15, maxSize = 500)
+
+# Filter the results by p-value and enrichment score
+fgsea_res_sig <- result[result$FDR < 0.05,]
+fgsea_res_sig <- fgsea_res_sig[order(-result$NES),]
+
+# Print the DEPs
+print(result)
 ```
 
